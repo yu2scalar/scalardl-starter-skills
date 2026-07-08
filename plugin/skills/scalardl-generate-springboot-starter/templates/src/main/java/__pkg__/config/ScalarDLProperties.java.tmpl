@@ -1,0 +1,94 @@
+package {{PACKAGE_NAME}}.config;
+
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+/**
+ * Externalised settings for the ScalarDL Java Client SDK.
+ *
+ * Keys are bound from {@code application.properties} (prefix {@code scalardl}).
+ * The optional Auditor section is bound from {@code scalardl.auditor.*}.
+ *
+ * <p>Both authentication methods are supported on the same property set:
+ * <ul>
+ *   <li>{@code digital-signature} (default) — uses {@code cert-path} / {@code private-key-path}</li>
+ *   <li>{@code hmac} — uses {@code hmac-secret-key} / {@code hmac-secret-key-version}</li>
+ * </ul>
+ * Only the fields relevant to the selected {@code authentication-method} are read by
+ * {@code ScalarDLService.buildClientConfig()}; the other set may be left null.
+ */
+@Data
+@ConfigurationProperties(prefix = "scalardl")
+public class ScalarDLProperties {
+
+    /** gRPC host / port of the ScalarDL Ledger envoy. */
+    private String serverHost = "localhost";
+    private Integer serverPort = 50051;
+    private Integer serverPrivilegedPort = 50052;
+
+    /** Client identity (entity id) — used by both DS and HMAC auth. */
+    private String entityId = "client";
+
+    /** Authentication method: "digital-signature" (default) or "hmac". */
+    private String authenticationMethod = "digital-signature";
+
+    // --- DS (digital-signature) identity ---
+
+    /** Legacy alias for entityId; kept for binding compatibility with v0.5.0 scaffolds. */
+    private String certHolderId;
+
+    private Integer certVersion = 1;
+
+    /** Either certPath OR certPem must be set when using DS auth. */
+    private String certPath;
+    private String certPem;
+
+    /** Either privateKeyPath OR privateKeyPem must be set when using DS auth. */
+    private String privateKeyPath;
+    private String privateKeyPem;
+
+    // --- HMAC identity ---
+
+    /**
+     * Literal HMAC secret_key (Base64). Sample-grade: see the warning block at the
+     * top of application.properties for the production-migration story.
+     */
+    private String hmacSecretKey;
+    private Integer hmacSecretKeyVersion = 1;
+
+    // --- TLS (Client → Ledger) ---
+
+    /** When true, the SDK uses TLS to talk to the Ledger envoy. */
+    private Boolean tlsEnabled = false;
+    private String tlsCaRootCertPath;
+    private String tlsCaRootCertPem;
+
+    /**
+     * TLS SNI / authority override — pins TLS verification to the envoy cert's
+     * SAN DNS name (e.g. {@code <ledger>-envoy.<ns>.svc.cluster.local}) so the
+     * client can connect via IP (minikube tunnel etc.) without a hostname-mismatch.
+     */
+    private String tlsOverrideAuthority;
+
+    /** Optional: set when an auth proxy in front of the Ledger requires a token. */
+    private String authorizationCredential;
+
+    private Auditor auditor = new Auditor();
+
+    @Data
+    public static class Auditor {
+        /** When true, every Ledger call is mirrored to the Auditor for end-to-end audit. */
+        private Boolean enabled = false;
+        private String host = "localhost";
+        private Integer port = 40051;
+        private Integer privilegedPort = 40052;
+
+        private Boolean tlsEnabled = false;
+        private String tlsCaRootCertPath;
+        private String tlsCaRootCertPem;
+        private String tlsOverrideAuthority;
+
+        private String authorizationCredential;
+        private String linearizableValidationContractId = "validate-ledger";
+    }
+}

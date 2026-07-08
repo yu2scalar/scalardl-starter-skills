@@ -1,0 +1,10 @@
+# Local E2E config — contains license key, DB cred, cluster context. NEVER commit.
+e2e-config.local.json
+env.sh
+
+# Re-include the template (repo root .gitignore's `*.local.*` pattern would
+# otherwise ignore this too).
+!e2e-config.local.json.example
+
+# E2E run artifacts (logs, generated bundles per pattern).
+e2e-runs/

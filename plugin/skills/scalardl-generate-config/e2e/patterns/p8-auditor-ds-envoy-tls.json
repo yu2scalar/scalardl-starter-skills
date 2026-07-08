@@ -1,0 +1,20 @@
+{
+  "patternName": "p8-auditor-ds-envoy-tls",
+  "description": "Auditor + DS / envoy-loadbalancer / TLS=on (server-server too). Adds gRPC TLS between client/Ledger/Auditor. Most complex of the 8 patterns.",
+  "context": {
+    "auditor": true,
+    "dsPattern": true,
+    "hmacPattern": false,
+    "authMethod": "digital-signature",
+    "proofEnabled": true,
+    "envoyLoadBalancer": true,
+    "adminLedgerHost": "<LEDGER_EXTERNAL_IP>",
+    "adminAuditorHost": "<AUDITOR_EXTERNAL_IP>",
+    "auditorScalarDbContactPoints": "jdbc:postgresql://host.minikube.internal:5433/auditor",
+    "tlsEnabled": true,
+    "tlsServerServer": true,
+    "tlsClientLedgerCaPath": "./cert/ledger-tls-cert.pem",
+    "tlsClientAuditorCaPath": "./cert/auditor-tls-cert.pem",
+    "licensing": true
+  }
+}

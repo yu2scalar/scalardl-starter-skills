@@ -1,0 +1,104 @@
+package {{PACKAGE_NAME}}.cli;
+
+import {{PACKAGE_NAME}}.dto.ContractDefinition;
+import {{PACKAGE_NAME}}.dto.FunctionDefinition;
+import {{PACKAGE_NAME}}.service.ContractGenerator;
+import {{PACKAGE_NAME}}.service.FunctionGenerator;
+import {{PACKAGE_NAME}}.util.VersionUtil;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Stream;
+
+/**
+ * Offline renderer: reads {@code examples/*.json} and writes Contract/Function {@code .java}
+ * to {@code generated/contracts/} / {@code generated/functions/} without booting Spring Boot
+ * and without any ScalarDL Ledger I/O.
+ *
+ * <p>Usage (via the {@code render} Gradle task):
+ * <pre>
+ *   ./gradlew render                               # render every examples/*.json
+ *   ./gradlew render -Pargs="UpdateAssetFunction"  # render one (file stem, no .json)
+ *   ./gradlew render -Pargs="--functions"          # render only function-shaped files
+ *   ./gradlew render -Pargs="--contracts"          # render only contract-shaped files
+ * </pre>
+ *
+ * <p>Detection: a JSON is treated as a Function if it has any of {@code linkedContractId},
+ * {@code mappings}, or {@code scalarDbSchema}; otherwise it's a Contract.
+ */
+public final class RenderCli {
+
+    private RenderCli() {}
+
+    public static void main(String[] args) throws IOException {
+        Path projectDir = Path.of(System.getProperty("user.dir"));
+        Path examplesDir = projectDir.resolve("examples");
+        Path generatedContracts = projectDir.resolve("generated/contracts");
+        Path generatedFunctions = projectDir.resolve("generated/functions");
+        Files.createDirectories(generatedContracts);
+        Files.createDirectories(generatedFunctions);
+
+        boolean onlyFunctions = false;
+        boolean onlyContracts = false;
+        String singleName = null;
+        for (String a : args) {
+            if ("--functions".equals(a)) onlyFunctions = true;
+            else if ("--contracts".equals(a)) onlyContracts = true;
+            else if (a.startsWith("--")) throw new IllegalArgumentException("unknown flag: " + a);
+            else singleName = a;
+        }
+
+        List<Path> jsonFiles = new ArrayList<>();
+        if (singleName != null) {
+            Path p = examplesDir.resolve(singleName + ".json");
+            if (!Files.exists(p)) {
+                throw new IllegalArgumentException("examples/" + singleName + ".json not found");
+            }
+            jsonFiles.add(p);
+        } else {
+            try (Stream<Path> s = Files.list(examplesDir)) {
+                s.filter(p -> p.toString().endsWith(".json")).sorted().forEach(jsonFiles::add);
+            }
+        }
+
+        ObjectMapper mapper = new ObjectMapper();
+        ContractGenerator contractGen = new ContractGenerator();
+        FunctionGenerator functionGen = new FunctionGenerator();
+
+        int rendered = 0, skipped = 0;
+        for (Path jsonFile : jsonFiles) {
+            JsonNode root = mapper.readTree(jsonFile.toFile());
+            boolean isFunction = root.has("linkedContractId") || root.has("mappings") || root.has("scalarDbSchema");
+            if (isFunction && onlyContracts) { skipped++; continue; }
+            if (!isFunction && onlyFunctions) { skipped++; continue; }
+
+            try {
+                if (isFunction) {
+                    FunctionDefinition def = mapper.treeToValue(root, FunctionDefinition.class);
+                    String src = functionGen.generate(def);
+                    String className = VersionUtil.getVersionedName(def.getName(), def.getVersion());
+                    Path out = generatedFunctions.resolve(className + ".java");
+                    Files.writeString(out, src);
+                    System.out.println("[function] " + jsonFile.getFileName() + " → " + projectDir.relativize(out));
+                } else {
+                    ContractDefinition def = mapper.treeToValue(root, ContractDefinition.class);
+                    String src = contractGen.generate(def);
+                    String className = VersionUtil.getVersionedName(def.getName(), def.getVersion());
+                    Path out = generatedContracts.resolve(className + ".java");
+                    Files.writeString(out, src);
+                    System.out.println("[contract] " + jsonFile.getFileName() + " → " + projectDir.relativize(out));
+                }
+                rendered++;
+            } catch (Exception e) {
+                System.err.println("[skipped] " + jsonFile.getFileName() + " — " + e.getMessage());
+                skipped++;
+            }
+        }
+        System.out.println("Done. Rendered " + rendered + ", skipped " + skipped + ".");
+    }
+}

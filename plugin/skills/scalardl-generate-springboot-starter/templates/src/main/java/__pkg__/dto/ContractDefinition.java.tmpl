@@ -1,0 +1,98 @@
+package {{PACKAGE_NAME}}.dto;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.JsonNode;
+import lombok.Data;
+
+import java.util.List;
+
+/**
+ * Definition for a generated Contract. POST this JSON to {@code /api/contracts/register}.
+ *
+ * <p>Operations supported:
+ * <ul>
+ *   <li>{@code READ_ASSET}  — read one asset by its derived id. Calls {@code ledger.scan(AssetFilter)}.
+ *                              Default {@code historyLimit=1} returns the latest entry only;
+ *                              passing {@code historyLimit > 1} (or {@code 0} for unlimited) returns
+ *                              multiple aged entries (history). Optional {@code ageOrder} /
+ *                              {@code startAge} / {@code endAge} live in the runtime argument.</li>
+ *   <li>{@code PUT_ASSET}   — read existing, run a modify TODO (default: overwrite with input),
+ *                              {@code ledger.put} the result. ScalarDL Ledger appends a new aged
+ *                              entry on every put — old entries persist (audit chain). Absent →
+ *                              writes a fresh asset; present → modifies and appends.</li>
+ *   <li>{@code PUT_ASSETS}  — multi-asset variant of {@link Op#PUT_ASSET}. Receives
+ *                              {@code argument.assets} as a homogeneous-shape array (every entry
+ *                              has the same {@code assetIdFields}); reads each, runs the modify
+ *                              TODO, writes each back atomically. Use cases: transfer between
+ *                              accounts, material→product transformations, bulk updates.</li>
+ * </ul>
+ *
+ * <p>For richer behaviour (custom logic, validation, multi-step branching), ask Claude Code to
+ * extend the generated {@code .java}; behaviour is delegated to the generated code, not encoded
+ * in this JSON.
+ *
+ * <p>Example:
+ * <pre>
+ * {
+ *   "name": "UserAccount",
+ *   "version": "1.0.0",
+ *   "packageName": "com.example.contracts",
+ *   "op": "PUT_ASSET",
+ *   "assetIdFields": ["userName"],
+ *   "sampleInput": {
+ *     "userName": "Alice",
+ *     "userAddress": "Tokyo",
+ *     "email": "alice@example.com"
+ *   }
+ * }
+ * </pre>
+ */
+@Data
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class ContractDefinition {
+
+    public enum Op {
+        /**
+         * Read one asset by its derived id. Calls {@code ledger.scan(AssetFilter)}; default
+         * {@code historyLimit=1} returns the latest entry only, larger limits return history.
+         * Scan parameters ({@code historyLimit}, {@code ageOrder}, {@code startAge},
+         * {@code endAge}) live in the runtime {@code argument} JSON, NOT in the Contract
+         * definition — one registered Contract handles every query variant. Returns
+         * {@code {count, asset_records: [{id, age, data}, ...]}} (array shape regardless of count).
+         * Pass {@code historyLimit=0} for unlimited.
+         */
+        READ_ASSET,
+        /**
+         * Read existing, run a user-supplied modify TODO (default: overwrite with input),
+         * {@code ledger.put} the result. ScalarDL Ledger appends a new aged entry on every put
+         * (append-only versioning — old entries persist as part of the audit chain). Absent →
+         * writes a fresh asset; present → applies the modify TODO and appends a new version.
+         * The generated template includes a {@code TODO (modify)} block so the developer (or
+         * Claude Code) can replace the default merge logic.
+         */
+        PUT_ASSET,
+        /**
+         * Multi-asset variant of {@link #PUT_ASSET}. Receives {@code argument.assets} as a
+         * homogeneous-shape array (every entry has the same {@code assetIdFields}); reads each
+         * existing asset, runs a multi-asset modify {@code TODO}, then writes each back atomically.
+         * Typical patterns: balance transfer between two accounts, material → product transformations,
+         * bulk updates on N assets at once. Heterogeneous shapes (different fields per asset) are
+         * out of scope today; fork the template if needed.
+         */
+        PUT_ASSETS
+    }
+
+    private String name;
+    private String version;
+    private String packageName;
+    private Op op;
+
+    /** Field names from {@link #sampleInput} that combine into the asset id (joined with ":"). */
+    private List<String> assetIdFields;
+
+    /**
+     * Example input JSON. Used only for documentation and field discovery; the generated Contract
+     * itself reads the actual runtime argument as JsonNode.
+     */
+    private JsonNode sampleInput;
+}

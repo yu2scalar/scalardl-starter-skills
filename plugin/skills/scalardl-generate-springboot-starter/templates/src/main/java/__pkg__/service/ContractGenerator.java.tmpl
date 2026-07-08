@@ -1,0 +1,112 @@
+package {{PACKAGE_NAME}}.service;
+
+import com.github.mustachejava.DefaultMustacheFactory;
+import com.github.mustachejava.Mustache;
+import com.github.mustachejava.MustacheFactory;
+import {{PACKAGE_NAME}}.dto.ContractDefinition;
+import {{PACKAGE_NAME}}.util.VersionUtil;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Renders Contract Java source from a {@link ContractDefinition}. The op picks one of the
+ * {@code resources/contract-templates/<OP>.java.mustache} templates (READ_ASSET / PUT_ASSET /
+ * PUT_ASSETS), and the asset id expression is built by joining the chosen fields with {@code ":"}.
+ */
+@Slf4j
+@Service
+public class ContractGenerator {
+
+    private static final MustacheFactory MUSTACHE_FACTORY = new DefaultMustacheFactory();
+    private static final String SEPARATOR = ":";
+
+    public String generate(ContractDefinition definition) throws IOException {
+        validate(definition);
+
+        String className = VersionUtil.getVersionedName(definition.getName(), definition.getVersion());
+        String templatePath = "contract-templates/" + definition.getOp().name() + ".java.mustache";
+
+        Map<String, Object> ctx = buildContext(definition, className);
+
+        try (Reader reader = openTemplate(templatePath)) {
+            Mustache mustache = MUSTACHE_FACTORY.compile(reader, definition.getOp().name());
+            StringWriter out = new StringWriter();
+            mustache.execute(out, ctx).flush();
+            return out.toString();
+        }
+    }
+
+    private Map<String, Object> buildContext(ContractDefinition def, String className) {
+        Map<String, Object> ctx = new HashMap<>();
+        ctx.put("className", className);
+        ctx.put("packageName", def.getPackageName());
+        ctx.put("name", def.getName());
+        ctx.put("version", def.getVersion());
+        ctx.put("assetIdFields", def.getAssetIdFields());
+        // READ_ASSET / PUT_ASSET: id is built from the top-level `argument`.
+        ctx.put("assetIdExpression", buildJavaConcatenation(def.getAssetIdFields(), "argument"));
+        // PUT_ASSETS: id is built from each entry of an input array, where the loop variable is
+        // named `in`.
+        ctx.put("assetIdExpressionFromInputItem", buildJavaConcatenation(def.getAssetIdFields(), "in"));
+        return ctx;
+    }
+
+    /**
+     * Build a Java string concatenation expression from a list of input field names, sourcing
+     * each value from {@code <varName>.get("<field>").asText()}.
+     *
+     * <p>Single field {@code [userName]} with {@code varName="argument"} →
+     * {@code argument.get("userName").asText()}.
+     *
+     * <p>Multiple fields {@code [userName, orderId]} with {@code varName="in"} →
+     * {@code in.get("userName").asText() + ":" + in.get("orderId").asText()}.
+     */
+    private static String buildJavaConcatenation(List<String> assetIdFields, String varName) {
+        if (assetIdFields == null || assetIdFields.isEmpty()) {
+            return "\"\"";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < assetIdFields.size(); i++) {
+            if (i > 0) {
+                sb.append(" + \"").append(SEPARATOR).append("\" + ");
+            }
+            sb.append(varName).append(".get(\"").append(assetIdFields.get(i)).append("\").asText()");
+        }
+        return sb.toString();
+    }
+
+    private static Reader openTemplate(String path) {
+        var stream = ContractGenerator.class.getClassLoader().getResourceAsStream(path);
+        if (stream == null) {
+            throw new IllegalStateException("Template not found on classpath: " + path);
+        }
+        return new InputStreamReader(stream, StandardCharsets.UTF_8);
+    }
+
+    private static void validate(ContractDefinition def) {
+        if (def.getName() == null || def.getName().isEmpty()) {
+            throw new IllegalArgumentException("ContractDefinition.name is required");
+        }
+        if (def.getVersion() == null) {
+            throw new IllegalArgumentException("ContractDefinition.version is required");
+        }
+        if (def.getPackageName() == null) {
+            throw new IllegalArgumentException("ContractDefinition.packageName is required");
+        }
+        if (def.getOp() == null) {
+            throw new IllegalArgumentException("ContractDefinition.op is required (READ_ASSET, PUT_ASSET, or PUT_ASSETS)");
+        }
+        if (def.getAssetIdFields() == null || def.getAssetIdFields().isEmpty()) {
+            throw new IllegalArgumentException("ContractDefinition.assetIdFields must contain at least one field name");
+        }
+    }
+}

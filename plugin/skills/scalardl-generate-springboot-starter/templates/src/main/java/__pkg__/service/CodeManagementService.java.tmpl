@@ -1,0 +1,76 @@
+package {{PACKAGE_NAME}}.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import {{PACKAGE_NAME}}.dto.ContractDefinition;
+import {{PACKAGE_NAME}}.dto.FunctionDefinition;
+import {{PACKAGE_NAME}}.util.VersionUtil;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+
+/**
+ * Persists JSON definitions and generated Java sources to the on-disk layout used by the rest of
+ * the app:
+ *
+ * <pre>
+ * definitions/contracts/&lt;Base&gt;_V&lt;Version&gt;.json
+ * definitions/functions/&lt;Base&gt;_V&lt;Version&gt;.json
+ * generated/contracts/&lt;ClassName&gt;.java
+ * generated/functions/&lt;ClassName&gt;.java
+ * </pre>
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class CodeManagementService {
+
+    private static final String BASE_DIR = System.getProperty("user.dir");
+
+    private final ObjectMapper objectMapper;
+
+    public Path saveContractDefinition(ContractDefinition definition) throws IOException {
+        Path dir = Paths.get(BASE_DIR, "definitions", "contracts");
+        Files.createDirectories(dir);
+        Path file = dir.resolve(VersionUtil.definitionFileName(definition.getName(), definition.getVersion()));
+        Files.writeString(file, objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(definition),
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        log.info("Saved contract definition: {}", file);
+        return file;
+    }
+
+    public Path saveFunctionDefinition(FunctionDefinition definition) throws IOException {
+        Path dir = Paths.get(BASE_DIR, "definitions", "functions");
+        Files.createDirectories(dir);
+        Path file = dir.resolve(VersionUtil.definitionFileName(definition.getName(), definition.getVersion()));
+        Files.writeString(file, objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(definition),
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        log.info("Saved function definition: {}", file);
+        return file;
+    }
+
+    public Path saveContractSource(String className, String javaSource) throws IOException {
+        Path dir = Paths.get(BASE_DIR, "generated", "contracts");
+        Files.createDirectories(dir);
+        Path file = dir.resolve(className + ".java");
+        Files.writeString(file, javaSource,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        log.info("Saved contract source: {}", file);
+        return file;
+    }
+
+    public Path saveFunctionSource(String className, String javaSource) throws IOException {
+        Path dir = Paths.get(BASE_DIR, "generated", "functions");
+        Files.createDirectories(dir);
+        Path file = dir.resolve(className + ".java");
+        Files.writeString(file, javaSource,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        log.info("Saved function source: {}", file);
+        return file;
+    }
+}

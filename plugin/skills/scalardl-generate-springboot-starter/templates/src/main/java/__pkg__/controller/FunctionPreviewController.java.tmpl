@@ -1,0 +1,65 @@
+package {{PACKAGE_NAME}}.controller;
+
+import {{PACKAGE_NAME}}.dto.FunctionDefinition;
+import {{PACKAGE_NAME}}.service.CodeManagementService;
+import {{PACKAGE_NAME}}.service.FunctionGenerator;
+import {{PACKAGE_NAME}}.util.VersionUtil;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * REST endpoint for previewing a Function.
+ *
+ * <p>{@code POST /api/functions/preview} — generate Java from a {@link FunctionDefinition} and
+ * write it to {@code generated/functions/<className>.java}, but do <b>not</b> compile and do
+ * <b>not</b> register it on the Ledger. Inspect or hand-edit the file (or delegate to Claude
+ * Code), then commit it via {@code POST /api/functions/register-from-source}.
+ *
+ * <p>For the simple "render and register in one shot" path, use
+ * {@code POST /api/functions/register} (which takes the {@link FunctionDefinition}).
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/functions")
+@RequiredArgsConstructor
+public class FunctionPreviewController {
+
+    private final FunctionGenerator functionGenerator;
+    private final CodeManagementService codeManagement;
+
+    @PostMapping("/preview")
+    public ResponseEntity<Map<String, Object>> preview(@RequestBody FunctionDefinition definition) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            String className = VersionUtil.getVersionedName(definition.getName(), definition.getVersion());
+            response.put("className", className);
+
+            codeManagement.saveFunctionDefinition(definition);
+            String source = functionGenerator.generate(definition);
+            Path javaPath = codeManagement.saveFunctionSource(className, source);
+
+            response.put("javaPath", javaPath.toString());
+            response.put("javaSource", source);
+            response.put("note",
+                    "Java rendered to " + javaPath + " — NOT compiled, NOT registered on the Ledger. "
+                  + "Inspect / edit the file (or ask Claude Code to add custom logic), then call "
+                  + "POST /api/functions/register-from-source with {\"className\":\"" + className + "\"} "
+                  + "to compile and register the modified source.");
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Function preview failed", e);
+            response.put("error", e.getMessage());
+            return ResponseEntity.internalServerError().body(response);
+        }
+    }
+}

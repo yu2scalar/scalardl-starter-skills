@@ -1,0 +1,73 @@
+package {{PACKAGE_NAME}}.controller;
+
+import {{PACKAGE_NAME}}.dto.ContractDefinition;
+import {{PACKAGE_NAME}}.service.CodeManagementService;
+import {{PACKAGE_NAME}}.service.ContractGenerator;
+import {{PACKAGE_NAME}}.util.VersionUtil;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * REST endpoint for previewing a Contract.
+ *
+ * <p>{@code POST /api/contracts/preview} — generate Java from a {@link ContractDefinition} and
+ * write it to {@code generated/contracts/<className>.java}, but do <b>not</b> compile and do
+ * <b>not</b> register it on the Ledger. Used to inspect or hand-edit the rendered code (or to
+ * delegate the edit to Claude Code) before committing it via
+ * {@code POST /api/contracts/register-from-source}.
+ *
+ * <p>Workflow:
+ * <pre>
+ *   POST /api/contracts/preview                 → generated/&lt;Class&gt;.java written, no Ledger I/O
+ *   (manual edit or "ask Claude Code to add the modify logic" here)
+ *   POST /api/contracts/register-from-source    → compile + register the just-edited file
+ * </pre>
+ *
+ * <p>Kept in its own controller so the Swagger UI groups it cleanly. The Ledger-touching
+ * 1-shot path remains at {@code POST /api/contracts/register}.
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/contracts")
+@RequiredArgsConstructor
+public class ContractPreviewController {
+
+    private final ContractGenerator contractGenerator;
+    private final CodeManagementService codeManagement;
+
+    @PostMapping("/preview")
+    public ResponseEntity<Map<String, Object>> preview(@RequestBody ContractDefinition definition) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            String className = VersionUtil.getVersionedName(definition.getName(), definition.getVersion());
+            response.put("className", className);
+
+            codeManagement.saveContractDefinition(definition);
+            String source = contractGenerator.generate(definition);
+            Path javaPath = codeManagement.saveContractSource(className, source);
+
+            response.put("javaPath", javaPath.toString());
+            response.put("javaSource", source);
+            response.put("note",
+                    "Java rendered to " + javaPath + " — NOT compiled, NOT registered on the Ledger. "
+                  + "Inspect / edit the file (or ask Claude Code to add custom logic), then call "
+                  + "POST /api/contracts/register-from-source with {\"className\":\"" + className + "\"} "
+                  + "to compile and register the modified source.");
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Contract preview failed", e);
+            response.put("error", e.getMessage());
+            return ResponseEntity.internalServerError().body(response);
+        }
+    }
+}

@@ -1,0 +1,96 @@
+# ============================================================
+# ⚠️  SAMPLE / DEMO VALUES — DO NOT USE IN PRODUCTION  ⚠️
+#
+# This file contains literal secret values to keep the scaffold's
+# "./gradlew bootRun" workflow as friction-free as possible:
+#
+#   - DS:   ./cert/client-key.pem on disk (private key, plaintext file)
+#   - HMAC: scalardl.hmac-secret-key=<actual-base64-value> (below)
+#
+# For PRODUCTION deployments you MUST replace this scheme with one of:
+#
+#   1. Kubernetes Secret (recommended for k8s deployments)
+#        - HMAC: inject via env var; read with ${SCALARDL_HMAC_SECRET}
+#        - DS:   mount cert/ as a Secret-backed volume (readOnly)
+#
+#   2. HashiCorp Vault / AWS Secrets Manager (non-k8s)
+#        - Use Spring Cloud Vault / AWS Parameter Store integration
+#
+#   3. Spring Cloud Config Server with encrypted properties ({cipher})
+#
+# Operational hygiene (already enforced by the bundled .gitignore):
+#   - cert/, this application.properties, and *.pem files are git-ignored
+#     by default — never push secrets to a public repository
+#   - Rotate the HMAC secret_key periodically (use secret_key_version)
+#   - Restrict file permissions on cert/ to 0600 in production
+#
+# Reference: the companion `scalardl-generate-config` deploy bundle uses
+# env.sh + sed placeholder replacement to inject secrets at deploy time —
+# a production-style pattern. See ../scalardl-config/scripts/ for examples.
+# ============================================================
+
+spring.application.name={{PROJECT_NAME}}
+
+# springdoc-openapi (Swagger UI) — http://localhost:8080/swagger-ui/index.html
+springdoc.swagger-ui.path=/swagger-ui/index.html
+springdoc.api-docs.path=/v3/api-docs
+
+# ScalarDL — server endpoint
+scalardl.server-host={{SCALARDL_HOST}}
+scalardl.server-port={{SCALARDL_PORT}}
+scalardl.server-privileged-port={{SCALARDL_PRIVILEGED_PORT}}
+
+# ScalarDL — client identity
+scalar.dl.client.entity.id={{CLIENT_ENTITY_ID}}
+scalardl.entity-id={{CLIENT_ENTITY_ID}}
+
+# ScalarDL — authentication method ("digital-signature" or "hmac")
+scalardl.authentication-method={{AUTH_METHOD}}
+
+{{#DS}}
+# ScalarDL — DS (digital-signature) identity
+# Cert / key files live under ./cert/ (relative to the project root).
+# Branch A copies these from the scalardl-generate-config bundle.
+# Branch B requires you to generate them — see README.md "Generating cert/key".
+scalardl.cert-holder-id={{CLIENT_ENTITY_ID}}
+scalardl.cert-version=1
+scalardl.cert-path=./cert/client-cert.pem
+scalardl.private-key-path=./cert/client-key.pem
+{{/DS}}
+
+{{#HMAC}}
+# ScalarDL — HMAC identity (LITERAL value baked at scaffold time)
+# - Branch A: extracted from ../scalardl-config/client.properties (M2 bundle)
+# - Branch B: generated via `openssl rand -base64 32` at scaffold time
+# See the warning block at the top of this file before promoting to production.
+scalardl.hmac-secret-key={{HMAC_SECRET_KEY}}
+scalardl.hmac-secret-key-version={{HMAC_SECRET_KEY_VERSION}}
+{{/HMAC}}
+
+# ScalarDL — TLS (Client → Ledger)
+# A Ledger fronted by envoy with TLS termination requires the client to trust
+# the envoy cert (via tls-ca-root-cert-path) and use the cert's SAN DNS name
+# (via tls-override-authority) when connecting via IP.
+scalardl.tls-enabled={{SCALARDL_TLS_ENABLED}}
+{{#TLS_ENABLED}}
+{{#TLS_CA_ROOT_CERT_PATH}}scalardl.tls-ca-root-cert-path={{TLS_CA_ROOT_CERT_PATH}}{{/TLS_CA_ROOT_CERT_PATH}}
+{{#TLS_OVERRIDE_AUTHORITY}}scalardl.tls-override-authority={{TLS_OVERRIDE_AUTHORITY}}{{/TLS_OVERRIDE_AUTHORITY}}
+{{/TLS_ENABLED}}
+
+# ScalarDL — Auditor.
+# A Ledger running with Auditor enabled rejects any client request that lacks an Auditor signature
+# (DL-LEDGER-407003). Set scalardl.auditor.enabled to match your Ledger deployment.
+scalardl.auditor.enabled={{AUDITOR_ENABLED}}
+scalardl.auditor.host={{AUDITOR_HOST}}
+scalardl.auditor.port={{AUDITOR_PORT}}
+scalardl.auditor.privileged-port={{AUDITOR_PRIVILEGED_PORT}}
+scalardl.auditor.tls-enabled={{AUDITOR_TLS_ENABLED}}
+{{#AUDITOR_TLS_ENABLED}}
+{{#AUDITOR_TLS_CA_ROOT_CERT_PATH}}scalardl.auditor.tls-ca-root-cert-path={{AUDITOR_TLS_CA_ROOT_CERT_PATH}}{{/AUDITOR_TLS_CA_ROOT_CERT_PATH}}
+{{#AUDITOR_TLS_OVERRIDE_AUTHORITY}}scalardl.auditor.tls-override-authority={{AUDITOR_TLS_OVERRIDE_AUTHORITY}}{{/AUDITOR_TLS_OVERRIDE_AUTHORITY}}
+{{/AUDITOR_TLS_ENABLED}}
+scalardl.auditor.linearizable-validation-contract-id=validate-ledger
+
+# File upload limits (for /api/generator/contract|function definition uploads)
+spring.servlet.multipart.max-file-size=10MB
+spring.servlet.multipart.max-request-size=10MB

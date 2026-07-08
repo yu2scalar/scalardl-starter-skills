@@ -1,0 +1,7 @@
+# SHA-256 of compiled sample bytecode (plan-009 W3)
+# Build host: Linux 6.17.0-23-generic x86_64
+# Built at:   2026-05-11T08:53:08Z
+# javac:      javac 21.0.10
+
+4451cc2f84dd29a6d051004f2fcdd3e91893fa0fc0a665311a6b0cdb5f9629e6  ./com/example/functions/SmokeAssetFunction.class
+c56afc5b94ef456b2e1fe5615997c14b2cda42384d944787b062598700d3cfb4  ./com/example/contracts/SmokeAsset.class

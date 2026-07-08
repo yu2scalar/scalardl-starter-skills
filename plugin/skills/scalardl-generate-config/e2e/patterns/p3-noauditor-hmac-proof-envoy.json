@@ -1,0 +1,16 @@
+{
+  "patternName": "p3-noauditor-hmac-proof-envoy",
+  "description": "Ledger-only / HMAC / AssetProof=Yes / envoy-loadbalancer / TLS=off. The Counterintuitive case: HMAC client auth + proof.enabled=true still requires DS keys for AssetProof signing (LedgerConfig.java doesn't populate serversAuthHmacSecretKey when auditor.enabled=false).",
+  "context": {
+    "auditor": false,
+    "dsPattern": false,
+    "hmacPattern": true,
+    "authMethod": "hmac",
+    "proofEnabled": true,
+    "envoyLoadBalancer": true,
+    "adminLedgerHost": "<LEDGER_EXTERNAL_IP>",
+    "tlsEnabled": false,
+    "tlsServerServer": false,
+    "licensing": true
+  }
+}

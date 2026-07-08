@@ -1,0 +1,16 @@
+{
+  "patternName": "p4-noauditor-hmac-noproof-envoy",
+  "description": "Ledger-only / HMAC / AssetProof=No / envoy-loadbalancer / TLS=off. Minimal HMAC: no DS keys needed (proof.enabled=false means AssetProof signing is skipped entirely).",
+  "context": {
+    "auditor": false,
+    "dsPattern": false,
+    "hmacPattern": true,
+    "authMethod": "hmac",
+    "proofEnabled": false,
+    "envoyLoadBalancer": true,
+    "adminLedgerHost": "<LEDGER_EXTERNAL_IP>",
+    "tlsEnabled": false,
+    "tlsServerServer": false,
+    "licensing": true
+  }
+}

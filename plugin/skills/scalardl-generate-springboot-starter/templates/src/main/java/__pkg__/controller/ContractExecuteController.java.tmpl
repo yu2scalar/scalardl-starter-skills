@@ -1,0 +1,59 @@
+package {{PACKAGE_NAME}}.controller;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import {{PACKAGE_NAME}}.service.ScalarDLService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * REST endpoint for executing a registered Contract.
+ *
+ * <p>{@code POST /api/contracts/execute} — invoke a previously-registered Contract by id.
+ * {@code functionId} / {@code functionArgument} are optional; supplying {@code functionId}
+ * runs the linked Function atomically with the Contract.
+ *
+ * <p>Kept in its own controller so the Swagger UI group surfaces only the
+ * {@link ExecuteRequest} schema; registration lives in {@code ContractRegisterController}.
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/contracts")
+@RequiredArgsConstructor
+public class ContractExecuteController {
+
+    private final ScalarDLService scalarDL;
+
+    @PostMapping("/execute")
+    public ResponseEntity<Map<String, Object>> execute(@RequestBody ExecuteRequest request) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            Map<String, Object> result = scalarDL.executeContract(
+                    request.contractId(),
+                    request.argument(),
+                    request.functionId(),
+                    request.functionArgument());
+            response.put("status", "ok");
+            response.putAll(result);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Execute failed: contractId={}", request.contractId(), e);
+            response.put("status", "error");
+            response.put("error", e.getMessage());
+            return ResponseEntity.internalServerError().body(response);
+        }
+    }
+
+    public record ExecuteRequest(
+            String contractId,
+            JsonNode argument,
+            String functionId,
+            JsonNode functionArgument) {}
+}

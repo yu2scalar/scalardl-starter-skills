@@ -1,0 +1,26 @@
+# Build / IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
+
+# Java / Gradle artefacts (only relevant if you smoke-build a generated scaffold here)
+build/
+.gradle/
+out/
+
+# Local skill output / scratch
+/tmp/
+/scratch/
+*.local.*
+
+# Claude Code local
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Contributor-only files (plan-014 v2, 2026-05-14): plan docs, work-log,
+# next-actions, playbook, internal design notes — local to each contributor's
+# dev machine, NOT shared via GitHub. Each contributor maintains their own copy.
+/docs/
+/CLAUDE.md

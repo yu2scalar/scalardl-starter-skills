@@ -1,0 +1,337 @@
+package {{PACKAGE_NAME}}.service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.scalar.dl.client.config.ClientConfig;
+import com.scalar.dl.client.exception.ClientException;
+import com.scalar.dl.client.service.ClientService;
+import com.scalar.dl.client.service.ClientServiceFactory;
+import com.scalar.dl.ledger.model.ContractExecutionResult;
+import com.scalar.dl.ledger.model.LedgerValidationResult;
+import com.scalar.dl.ledger.proof.AssetProof;
+import com.scalar.dl.ledger.service.StatusCode;
+import com.scalar.dl.ledger.util.JacksonSerDe;
+import {{PACKAGE_NAME}}.config.ScalarDLProperties;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
+
+/**
+ * Thin wrapper around {@link ClientService} that builds a {@link ClientConfig} from the
+ * Spring-bound {@link ScalarDLProperties} and offers register / execute helpers used by the
+ * REST controllers.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ScalarDLService {
+
+    private final ScalarDLProperties properties;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final JacksonSerDe serde = new JacksonSerDe(new ObjectMapper());
+
+    /**
+     * Register the client's identity (cert for DS, secret for HMAC) with the
+     * Ledger. Dispatches based on {@code scalardl.authentication-method}:
+     * <ul>
+     *   <li>{@code digital-signature} → {@link ClientService#registerCertificate()}</li>
+     *   <li>{@code hmac}              → {@link ClientService#registerSecret()}</li>
+     * </ul>
+     * Both endpoints are mounted at {@code POST /api/certificate/register} so
+     * the caller does not need to care which method is configured.
+     */
+    public void registerCertificate() throws ClientException, IOException {
+        if ("hmac".equalsIgnoreCase(properties.getAuthenticationMethod())) {
+            runWithClient(ClientService::registerSecret);
+            log.info("HMAC secret registered for entity {}", properties.getEntityId());
+        } else {
+            runWithClient(ClientService::registerCertificate);
+            log.info("DS certificate registered for entity {}", properties.getEntityId());
+        }
+    }
+
+    public void registerContract(
+            String contractId,
+            String contractBinaryName,
+            byte[] contractBytes,
+            String contractProperties)
+            throws ClientException, IOException {
+
+        Path tempFile = Files.createTempFile("contract-", ".class");
+        try {
+            Files.write(tempFile, contractBytes);
+            registerContractFromFile(contractId, contractBinaryName, tempFile.toString(), contractProperties);
+        } finally {
+            Files.deleteIfExists(tempFile);
+        }
+    }
+
+    public void registerContractFromFile(
+            String contractId,
+            String contractBinaryName,
+            String contractClassFile,
+            String contractProperties)
+            throws ClientException, IOException {
+
+        JsonNode jsonProperties = (contractProperties == null || contractProperties.isEmpty())
+                ? null
+                : serde.deserialize(contractProperties);
+
+        runWithClient(client ->
+                client.registerContract(contractId, contractBinaryName, contractClassFile, jsonProperties));
+        log.info("Contract registered: {}", contractId);
+    }
+
+    public void registerFunction(
+            String functionId,
+            String functionBinaryName,
+            byte[] functionBytes)
+            throws ClientException, IOException {
+
+        Path tempFile = Files.createTempFile("function-", ".class");
+        try {
+            Files.write(tempFile, functionBytes);
+            registerFunctionFromFile(functionId, functionBinaryName, tempFile.toString());
+        } finally {
+            Files.deleteIfExists(tempFile);
+        }
+    }
+
+    public void registerFunctionFromFile(
+            String functionId,
+            String functionBinaryName,
+            String functionClassFile)
+            throws ClientException, IOException {
+
+        runWithClient(client ->
+                client.registerFunction(functionId, functionBinaryName, functionClassFile));
+        log.info("Function registered: {}", functionId);
+    }
+
+    public Map<String, Object> executeContract(String contractId, JsonNode contractArgument)
+            throws ClientException, IOException {
+        return executeContract(contractId, contractArgument, null, null);
+    }
+
+    public Map<String, Object> executeContract(
+            String contractId,
+            JsonNode contractArgument,
+            String functionId,
+            JsonNode functionArgument)
+            throws ClientException, IOException {
+
+        ClientServiceFactory factory = new ClientServiceFactory();
+        try {
+            ClientService client = factory.create(buildClientConfig());
+            ContractExecutionResult result = (functionId == null)
+                    ? client.executeContract(contractId, contractArgument)
+                    : client.executeContract(contractId, contractArgument, functionId, functionArgument);
+
+            Map<String, Object> response = new HashMap<>();
+            result.getContractResult().ifPresent(r -> response.put("contractResult", r));
+            result.getFunctionResult().ifPresent(r -> response.put("functionResult", r));
+            response.put("ledgerProofs", result.getLedgerProofs());
+            response.put("auditorProofs", result.getAuditorProofs());
+            log.info("Contract executed: {}", contractId);
+            return response;
+        } finally {
+            factory.close();
+        }
+    }
+
+    /**
+     * Verify the ledger integrity of a single asset via {@link ClientService#validateLedger}.
+     *
+     * <p>The error semantics depend on the deployment (see ScalarDL "Validate your data"):
+     * <ul>
+     *   <li><b>Ledger only</b>: {@code validateLedger} does <em>not</em> throw on a validation
+     *       failure — it returns a {@link LedgerValidationResult} whose {@link StatusCode} signals
+     *       tampering (e.g. {@code INVALID_HASH}, {@code INVALID_OUTPUT}). A {@link ClientException}
+     *       here means a <em>system</em> error (network / server), not tamper.</li>
+     *   <li><b>Ledger + Auditor</b>: {@code validateLedger} <em>throws</em>
+     *       {@link ClientException} with {@code StatusCode.INCONSISTENT_STATES} when Ledger and
+     *       Auditor disagree (possible tampering). Server-side Asset Proof must be enabled — that
+     *       is configured by the deploy bundle (scalardl-generate-config), not this app.</li>
+     * </ul>
+     *
+     * <p>Both a clean result and a detected-tamper finding return a response map (the controller
+     * maps it to HTTP 200 with {@code valid:false}); only a genuine system error propagates.
+     *
+     * @param namespace optional namespace ({@code null} → default namespace)
+     * @param assetId   the asset to validate (required)
+     * @param startAge  inclusive start age
+     * @param endAge    inclusive end age
+     */
+    public Map<String, Object> validateLedger(
+            String namespace, String assetId, int startAge, int endAge)
+            throws ClientException, IOException {
+
+        ClientServiceFactory factory = new ClientServiceFactory();
+        try {
+            ClientService client = factory.create(buildClientConfig());
+            boolean auditorEnabled = Boolean.TRUE.equals(properties.getAuditor().getEnabled());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("assetId", assetId);
+
+            if (auditorEnabled) {
+                // Auditor mode: a detected inconsistency surfaces as ClientException.
+                try {
+                    LedgerValidationResult result =
+                            client.validateLedger(namespace, assetId, startAge, endAge);
+                    putValidationResult(response, result.getCode(),
+                            result.getLedgerProof().orElse(null),
+                            result.getAuditorProof().orElse(null));
+                } catch (ClientException e) {
+                    if (e.getStatusCode() == StatusCode.INCONSISTENT_STATES) {
+                        // Tamper finding, not a system error — report it, don't rethrow.
+                        log.warn("Ledger/Auditor inconsistency for asset {}: {}", assetId,
+                                e.getMessage());
+                        response.put("code", e.getStatusCode().name());
+                        response.put("valid", false);
+                        return response;
+                    }
+                    throw e; // genuine system error
+                }
+            } else {
+                // Ledger-only mode: validation failure is reported via the status code.
+                LedgerValidationResult result =
+                        client.validateLedger(namespace, assetId, startAge, endAge);
+                putValidationResult(response, result.getCode(),
+                        result.getLedgerProof().orElse(null),
+                        result.getAuditorProof().orElse(null));
+            }
+            log.info("Ledger validated: asset={} code={}", assetId, response.get("code"));
+            return response;
+        } finally {
+            factory.close();
+        }
+    }
+
+    private void putValidationResult(
+            Map<String, Object> response, StatusCode code, AssetProof ledgerProof,
+            AssetProof auditorProof) {
+        response.put("code", code.name());
+        response.put("valid", code == StatusCode.OK);
+        if (ledgerProof != null) {
+            response.put("ledgerProof", String.valueOf(ledgerProof));
+        }
+        if (auditorProof != null) {
+            response.put("auditorProof", String.valueOf(auditorProof));
+        }
+    }
+
+    private ClientConfig buildClientConfig() throws IOException {
+        Properties props = new Properties();
+
+        // Connection (Ledger).
+        props.setProperty("scalar.dl.client.server.host", properties.getServerHost());
+        props.setProperty("scalar.dl.client.server.port", String.valueOf(properties.getServerPort()));
+        props.setProperty("scalar.dl.client.server.privileged_port",
+                String.valueOf(properties.getServerPrivilegedPort()));
+
+        // Identity (shared between DS and HMAC).
+        props.setProperty("scalar.dl.client.entity.id", properties.getEntityId());
+
+        // Authentication method dispatch.
+        String authMethod = properties.getAuthenticationMethod();
+        props.setProperty("scalar.dl.client.authentication.method", authMethod);
+
+        if ("hmac".equalsIgnoreCase(authMethod)) {
+            // HMAC identity (literal secret baked at scaffold time).
+            if (properties.getHmacSecretKey() == null || properties.getHmacSecretKey().isBlank()) {
+                throw new IllegalStateException(
+                        "scalardl.hmac-secret-key is required when scalardl.authentication-method=hmac");
+            }
+            props.setProperty("scalar.dl.client.entity.identity.hmac.secret_key",
+                    properties.getHmacSecretKey());
+            props.setProperty("scalar.dl.client.entity.identity.hmac.secret_key_version",
+                    String.valueOf(properties.getHmacSecretKeyVersion()));
+        } else {
+            // DS identity (default).
+            props.setProperty("scalar.dl.client.entity.identity.digital_signature.cert_version",
+                    String.valueOf(properties.getCertVersion()));
+            if (properties.getCertPath() != null) {
+                props.setProperty("scalar.dl.client.entity.identity.digital_signature.cert_path",
+                        properties.getCertPath());
+            }
+            if (properties.getCertPem() != null) {
+                props.setProperty("scalar.dl.client.entity.identity.digital_signature.cert_pem",
+                        properties.getCertPem());
+            }
+            if (properties.getPrivateKeyPath() != null) {
+                props.setProperty("scalar.dl.client.entity.identity.digital_signature.private_key_path",
+                        properties.getPrivateKeyPath());
+            }
+            if (properties.getPrivateKeyPem() != null) {
+                props.setProperty("scalar.dl.client.entity.identity.digital_signature.private_key_pem",
+                        properties.getPrivateKeyPem());
+            }
+        }
+
+        // TLS (Client → Ledger).
+        if (Boolean.TRUE.equals(properties.getTlsEnabled())) {
+            props.setProperty("scalar.dl.client.tls.enabled", "true");
+            if (properties.getTlsCaRootCertPath() != null) {
+                props.setProperty("scalar.dl.client.tls.ca_root_cert_path",
+                        properties.getTlsCaRootCertPath());
+            }
+            if (properties.getTlsCaRootCertPem() != null) {
+                props.setProperty("scalar.dl.client.tls.ca_root_cert_pem",
+                        properties.getTlsCaRootCertPem());
+            }
+            if (properties.getTlsOverrideAuthority() != null) {
+                props.setProperty("scalar.dl.client.tls.override_authority",
+                        properties.getTlsOverrideAuthority());
+            }
+        }
+
+        // Auditor (cross-validation).
+        ScalarDLProperties.Auditor auditor = properties.getAuditor();
+        if (Boolean.TRUE.equals(auditor.getEnabled())) {
+            props.setProperty("scalar.dl.client.auditor.enabled", "true");
+            props.setProperty("scalar.dl.client.auditor.host", auditor.getHost());
+            props.setProperty("scalar.dl.client.auditor.port", String.valueOf(auditor.getPort()));
+            props.setProperty("scalar.dl.client.auditor.privileged_port",
+                    String.valueOf(auditor.getPrivilegedPort()));
+            if (Boolean.TRUE.equals(auditor.getTlsEnabled())) {
+                props.setProperty("scalar.dl.client.auditor.tls.enabled", "true");
+                if (auditor.getTlsCaRootCertPath() != null) {
+                    props.setProperty("scalar.dl.client.auditor.tls.ca_root_cert_path",
+                            auditor.getTlsCaRootCertPath());
+                }
+                if (auditor.getTlsCaRootCertPem() != null) {
+                    props.setProperty("scalar.dl.client.auditor.tls.ca_root_cert_pem",
+                            auditor.getTlsCaRootCertPem());
+                }
+                if (auditor.getTlsOverrideAuthority() != null) {
+                    props.setProperty("scalar.dl.client.auditor.tls.override_authority",
+                            auditor.getTlsOverrideAuthority());
+                }
+            }
+        }
+
+        return new ClientConfig(props);
+    }
+
+    @FunctionalInterface
+    private interface ClientAction {
+        void run(ClientService client) throws ClientException, IOException;
+    }
+
+    private void runWithClient(ClientAction action) throws ClientException, IOException {
+        ClientServiceFactory factory = new ClientServiceFactory();
+        try {
+            action.run(factory.create(buildClientConfig()));
+        } finally {
+            factory.close();
+        }
+    }
+}

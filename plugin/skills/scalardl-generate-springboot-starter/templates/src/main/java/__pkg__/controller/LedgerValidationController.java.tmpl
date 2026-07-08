@@ -1,0 +1,66 @@
+package {{PACKAGE_NAME}}.controller;
+
+import {{PACKAGE_NAME}}.service.ScalarDLService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * REST endpoint for verifying the ledger integrity of an asset.
+ *
+ * <p>{@code GET /api/ledger/validate?assetId=...} — verify a single asset via
+ * {@link com.scalar.dl.client.service.ClientService#validateLedger}. Read-only, so it is a GET.
+ * {@code namespace}, {@code startAge} and {@code endAge} are optional; omitting the age range
+ * validates the full history (0..Integer.MAX_VALUE) and omitting the namespace uses the default.
+ *
+ * <p><b>Interpreting the result:</b> a successful HTTP 200 means the validation <em>call</em>
+ * succeeded — inspect {@code valid} / {@code code} to learn whether the asset is intact.
+ * {@code valid:false} (e.g. {@code code:"INVALID_OUTPUT"} on a Ledger-only deployment, or
+ * {@code code:"INCONSISTENT_STATES"} on a Ledger+Auditor deployment) is a <em>tamper finding</em>,
+ * not a request error. HTTP 500 is reserved for genuine system errors (network / server).
+ *
+ * <p>Kept in its own controller so the Swagger UI groups the validation operation separately
+ * from contract/function registration and execution.
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/ledger")
+@RequiredArgsConstructor
+public class LedgerValidationController {
+
+    private final ScalarDLService scalarDL;
+
+    @GetMapping("/validate")
+    public ResponseEntity<Map<String, Object>> validate(
+            @RequestParam String assetId,
+            @RequestParam(required = false) String namespace,
+            @RequestParam(required = false, defaultValue = "0") int startAge,
+            @RequestParam(required = false, defaultValue = "2147483647") int endAge) {
+
+        Map<String, Object> response = new HashMap<>();
+        if (!(endAge >= startAge && startAge >= 0)) {
+            response.put("status", "error");
+            response.put("error", "endAge must be >= startAge >= 0");
+            return ResponseEntity.badRequest().body(response);
+        }
+        try {
+            Map<String, Object> result =
+                    scalarDL.validateLedger(namespace, assetId, startAge, endAge);
+            response.put("status", "ok");
+            response.putAll(result);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Validate failed: assetId={}", assetId, e);
+            response.put("status", "error");
+            response.put("error", e.getMessage());
+            return ResponseEntity.internalServerError().body(response);
+        }
+    }
+}

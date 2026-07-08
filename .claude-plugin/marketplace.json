@@ -1,0 +1,14 @@
+{
+  "name": "scalardl-starter-skills",
+  "owner": {
+    "name": "Yuji Ochiai",
+    "email": "yuji.ochiai@scalar-labs.com"
+  },
+  "plugins": [
+    {
+      "name": "scalardl-starter-skills",
+      "source": "./plugin/",
+      "description": "ScalarDL skills for Claude Code"
+    }
+  ]
+}

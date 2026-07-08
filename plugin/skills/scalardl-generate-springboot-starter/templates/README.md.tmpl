@@ -1,0 +1,251 @@
+# {{PROJECT_NAME}}
+
+A Spring Boot `{{SPRING_BOOT_VERSION}}` app wrapping the ScalarDL Java Client SDK `{{SDK_VERSION}}`. Turns JSON definitions into Contracts and Functions, compiles them at runtime, and registers them on the Ledger.
+
+## Run
+
+```bash
+./gradlew bootRun
+```
+
+- App: http://localhost:8080/
+- Swagger UI: http://localhost:8080/swagger-ui/index.html
+- API docs (JSON): http://localhost:8080/v3/api-docs
+
+## Prerequisites
+
+A reachable ScalarDL Ledger **v3.13.0 or later** (Java 21 JRE base). The runtime compiler in this app emits Java 17 bytecode (`--release 17`); older Ledger versions ship a Java 8 JRE and will fail to load the compiled Contract/Function classes with `UnsupportedClassVersionError`.
+
+If you don't have a Ledger yet, the sibling skill brings one up locally:
+
+```
+/generate-scalardl-environment
+```
+
+Adjust `scalardl.server-host` / `scalardl.server-port` in `application.properties` for your environment, and put the client cert + private key under `cert/`.
+
+Register the cert with the Ledger once before generating Contracts:
+
+```bash
+curl -X POST http://localhost:8080/api/certificate/register
+```
+
+## What you can do (v0.3.0)
+
+The generators emit one of these shapes per JSON definition:
+
+| Definition shape | Generates |
+|---|---|
+| `op: READ_ASSET` | Contract that reads one asset by an id derived from selected fields. Default returns the latest entry; pass `historyLimit > 1` (or `0` for unlimited) at execute time for history. |
+| `op: PUT_ASSET` | Contract that writes (or modifies) one asset. Absent → fresh write; present → runs a TODO modify block then `ledger.put`. ScalarDL Ledger appends a new aged entry on every put — the past is never overwritten (audit chain). |
+| `op: PUT_ASSETS` | Multi-asset variant: atomic write/modify across N homogeneous-shape assets. |
+| `op: UPSERT_RECORD` (Function) | Pairs with a `PUT_ASSET` Contract; writes one row into a ScalarDB table via `database.put` (storage-layer upsert) when the linked Contract executes. |
+| `op: UPSERT_RECORDS` (Function) | Pairs with a `PUT_ASSETS` Contract; iterates `contractArgument.assets[]` and writes one row per entry. |
+
+Anything else (UPDATE/DELETE on ScalarDB, heterogeneous multi-asset shapes, namespace, …) will arrive as additional presets / plans in upcoming releases. To get a custom shape today, ask Claude Code to extend the generated `.java`, then bump the `version` in the JSON definition and re-register.
+
+## Add Contracts and Functions
+
+The scaffold ships with no Contract or Function definitions — populate `examples/` by running the companion skills from inside this project directory:
+
+```
+/scalardl-add-contract     # Q&A picks a preset (READ_ASSET / PUT_ASSET / PUT_ASSETS)
+                           # and writes examples/<Name>.json
+/scalardl-add-function     # Q&A picks a preset (UPSERT_RECORD / UPSERT_RECORDS)
+                           # and writes examples/<Name>Function.json
+```
+
+Each invocation drops one JSON file into `examples/`. After that, register and execute via the curl commands below.
+
+## Definition reference
+
+The two add-skills produce JSON in these shapes. (Examples are illustrative — your own field names will vary.)
+
+### Contract definition
+
+```json
+{
+  "name": "<YourContract>",
+  "version": "1.0.0",
+  "packageName": "com.example.contracts",
+  "op": "PUT_ASSET",
+  "assetIdFields": ["<idField1>", "<idField2>"],
+  "sampleInput": { "<idField1>": "...", "<idField2>": "...", "<otherField>": "..." }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `op` | `READ_ASSET`, `PUT_ASSET`, or `PUT_ASSETS` |
+| `assetIdFields` | Names of fields from `sampleInput` that combine into the asset id (joined with `:`). For `PUT_ASSETS`, applied to each entry of `sampleInput.assets[]`. |
+| `sampleInput` | An example payload for documentation + asset-id derivation (not used at runtime). For `PUT_ASSETS`, must contain `"assets": [...]` of homogeneous-shape entries. |
+
+### Function definition
+
+```json
+{
+  "name": "<YourFunction>",
+  "version": "1.0.0",
+  "packageName": "com.example.functions",
+  "op": "UPSERT_RECORD",
+  "linkedContractId": "<YourContract>V1_0_0",
+  "scalarDbSchema": {
+    "<namespace>.<table>": {
+      "transaction": true,
+      "partition-key": ["<col>"],
+      "columns": { "<col>": "TEXT", "<col2>": "INT" }
+    }
+  },
+  "mappings": { "<col>": "<inputField>", "<col2>": "<inputField2>" }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `op` | `UPSERT_RECORD` (single row; pair with `PUT_ASSET` Contract) or `UPSERT_RECORDS` (N rows; pair with `PUT_ASSETS` Contract) |
+| `linkedContractId` | The Contract this Function pairs with |
+| `scalarDbSchema` | Standard ScalarDB Schema Loader JSON; exactly one `namespace.table` entry |
+| `mappings` | Column → input field name (column types come from `scalarDbSchema.columns`) |
+
+## Register and execute
+
+After running the add-skills above, register on the Ledger and execute. Substitute `<YourContract>` / `<YourFunction>` with what you named them.
+
+```bash
+# Register the Contract
+curl -X POST http://localhost:8080/api/contracts/register \
+  -H 'Content-Type: application/json' \
+  -d @examples/<YourContract>.json
+
+# Register the Function (optional; required only if your Function pairs with this Contract)
+curl -X POST http://localhost:8080/api/functions/register \
+  -H 'Content-Type: application/json' \
+  -d @examples/<YourFunction>.json
+
+# Execute
+curl -X POST http://localhost:8080/api/contracts/execute \
+  -H 'Content-Type: application/json' \
+  -d '{"contractId":"<YourContract>V1_0_0","argument":{"<idField1>":"...","<idField2>":"..."}}'
+```
+
+If the Function depends on a ScalarDB table, apply its schema with the standalone `scalardb-schema-loader` before executing — the skill does not provision ScalarDB tables.
+
+## Validate ledger integrity
+
+Verify that an asset's ledger has not been tampered with via `ClientService.validateLedger`:
+
+```bash
+# Validate the full history of an asset (read-only — uses GET)
+curl "http://localhost:8080/api/ledger/validate?assetId=<your-asset-id>"
+
+# Optional: restrict to an age range and/or a namespace
+curl "http://localhost:8080/api/ledger/validate?assetId=<id>&namespace=<ns>&startAge=0&endAge=5"
+```
+
+Interpreting the response (HTTP 200 means the *validation call* ran — check `valid` / `code`):
+
+- `{"status":"ok","valid":true,"code":"OK", ...}` — the asset is intact.
+- `{"status":"ok","valid":false,"code":"INVALID_OUTPUT", ...}` — a **tamper finding** (Ledger-only deployment; codes include `INVALID_HASH` / `INVALID_PREV_HASH` / `INVALID_CONTRACT` / `INVALID_OUTPUT`).
+- `{"status":"ok","valid":false,"code":"INCONSISTENT_STATES"}` — a **tamper finding** on a Ledger+Auditor deployment (Ledger and Auditor disagree).
+- HTTP 500 `{"status":"error", ...}` — a genuine system error (network / server), not a tamper finding.
+
+> On a **Ledger + Auditor** deployment, validation requires server-side Asset Proof to be enabled — that is configured in the deploy bundle (generated by `scalardl-generate-config`), not in this app.
+
+## Directory layout
+
+| Path | Role |
+|---|---|
+| `definitions/{contracts,functions}/` | Persisted JSON definitions |
+| `generated/{contracts,functions}/` | Auto-rendered Java sources |
+| `compiled/{contracts,functions}/` | Compiled `.class` files |
+| `examples/` | User-added definition JSONs (written by `/scalardl-add-contract` and `/scalardl-add-function`; empty after a fresh scaffold) |
+| `cert/` | Client certificate / private key |
+
+## Versioning and immutability
+
+ScalarDL has **two different update rules** for Contracts and Functions. Treat them separately.
+
+### Contract — strictly immutable
+
+Once a Contract is registered, **its bytecode lives in the Ledger forever**. Re-registering the same id fails (`CONTRACT_ALREADY_REGISTERED`); there is no `unregister`, no disable flag, no deactivate operation. This is enforced by the Core code (`ContractManager.register` does an existence check and throws if a duplicate is found).
+
+- **To fix a bug**: bump `version` in the JSON, re-POST `/api/contracts/register` — the generator builds a fresh `<Base>V<Major>_<Minor>_<Patch>` class, so old and new coexist. Switch your client to call the new id.
+- **The old version stays callable**. The only protection is client-side discipline: don't pass the old id in your `contractId` field.
+- **Security implication**: a vulnerable Contract leaves a permanent open hole. Test against a non-production Ledger before registering on production.
+
+### Function — can be overwritten
+
+`FunctionManager.register` does **not** check for an existing id; it just calls `bind()`, which is a plain ScalarDB `put` (upsert). So re-registering a Function id replaces the bytecode in place. The Core code also exposes `unbind()` (`Delete`) — Functions can be removed too. Functions are not part of the Ledger's audit chain (they only touch ScalarDB business tables), so updating them is operationally safe.
+
+**Why this app still emits `<Base>FunctionV1_0_0` versioned class names**: trace-ability, debugging, and rollback. Even though you *could* re-register a Function id with new bytecode, keeping versioned classes alongside lets you:
+
+- audit which Function bytecode ran each historical execute,
+- flip clients between versions cleanly during canary releases,
+- hold a known-good fallback for emergency rollback.
+
+This is a **convention**, not a ScalarDL rule. If you want the older "PUT-style" semantics for Functions, just keep the same `version` in the JSON definition and re-POST — the generator will still emit `<Base>FunctionV1_0_0` and the bytecode for that class id will be overwritten on the Ledger.
+
+## Four workflows for getting a Contract / Function on the Ledger
+
+### A. 1-shot register (simplest)
+
+```bash
+curl -X POST http://localhost:8080/api/contracts/register \
+  -H 'Content-Type: application/json' -d @examples/<YourContract>.json
+```
+
+The running app renders the Mustache template, compiles the result, and registers it on the Ledger — all in one call. Use when the preset's default behaviour is what you want.
+
+### B. Preview → edit → register (for custom logic without committing to the Ledger first)
+
+```bash
+# Step 1: render only — writes generated/contracts/<Class>.java. No compile, no Ledger I/O.
+curl -X POST http://localhost:8080/api/contracts/preview \
+  -H 'Content-Type: application/json' -d @examples/<YourContract>.json
+
+# Step 2: open generated/contracts/<YourContract>V1_0_0.java and edit, or ask Claude Code:
+#   "edit generated/contracts/<YourContract>V1_0_0.java to subtract argument.delta from
+#    current.quantity in the modify TODO block"
+
+# Step 3: compile + register WITHOUT regenerating from JSON, so your edits land on the Ledger.
+curl -X POST http://localhost:8080/api/contracts/register-from-source \
+  -H 'Content-Type: application/json' -d '{"className":"<YourContract>V1_0_0"}'
+```
+
+The `/preview` and `/register-from-source` pair gives you "skeleton + custom logic" without committing to the Ledger until you're satisfied. Same endpoints exist on `/api/functions/`.
+
+### C. Add a brand-new preset
+
+If none of the three Contract presets (`READ_ASSET` / `PUT_ASSET` / `PUT_ASSETS`) or two Function presets (`UPSERT_RECORD` / `UPSERT_RECORDS`) fit your shape, ask Claude Code to add a new Mustache template under `src/main/resources/{contract,function}-templates/` and extend the corresponding `Op` enum + Generator routing.
+
+The generated `.java` files all carry `// TODO (label): ...` markers and commented-out `setContext` / `getContractContext` samples explaining extension points; Claude Code reads these as actionable prompts when asked to extend.
+
+### D. Offline render (no Spring Boot, no Ledger — for batch / CI / quick template inspection)
+
+```bash
+./gradlew render                                # render every examples/*.json at once
+./gradlew render -Pargs="<YourContract>"        # render one (file stem; no .json suffix)
+./gradlew render -Pargs="--functions"           # render only Function-shaped JSONs
+./gradlew render -Pargs="--contracts"           # render only Contract-shaped JSONs
+```
+
+Outputs land at `generated/contracts/<Class>.java` / `generated/functions/<Class>.java`, identical to what `/preview` would produce — but without booting the Spring Boot app or touching the Ledger.
+
+JSON-shape detection: a file is treated as a Function when it has any of `linkedContractId`, `mappings`, or `scalarDbSchema`; otherwise as a Contract.
+
+Use this when:
+- you're iterating on a preset's Mustache template and want fast feedback;
+- you want to render every `examples/*.json` in one command (e.g., as a CI guard);
+- the Spring Boot app isn't running yet and you want to inspect the generated code.
+
+`./gradlew render` is **render only**. To register on the Ledger, follow up with Workflow A or B (`POST /api/contracts/register-from-source`).
+
+## Troubleshooting
+
+- `/swagger-ui/index.html` returns 404 — check `springdoc.swagger-ui.path` in `application.properties`.
+- `register failed: ... already registered` — bump the version and re-POST.
+- Cannot reach ScalarDL — verify `scalardl.server-host` / `scalardl.server-port` and that the Ledger is up.
+
+## License
+
+TBD.

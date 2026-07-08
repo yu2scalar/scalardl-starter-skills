@@ -1,0 +1,10 @@
+{
+  "smoke.smoke_assets": {
+    "transaction": true,
+    "partition-key": ["asset_id"],
+    "columns": {
+      "asset_id":  "TEXT",
+      "data_json": "TEXT"
+    }
+  }
+}

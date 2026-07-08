@@ -1,0 +1,50 @@
+{
+  "_comment_1": "Common Mustache context shared across all 8 patterns. Pattern-specific overrides live in patterns/pN.json's `context` block.",
+  "_comment_2": "Plan reference: docs/plan-009-auto-e2e-test-harness.md",
+
+  "targetVersion": "3.13.0",
+
+  "ledgerName": "scalardl-ledger",
+  "ledgerPort": 50051,
+  "ledgerPrivilegedPort": 50052,
+  "ledgerAdminPort": 50053,
+  "ledgerPrometheusPort": 8080,
+  "ledgerCertHolderId": "ledger",
+  "ledgerCertVersion": 1,
+
+  "auditorName": "scalardl-audit",
+  "auditorPort": 40051,
+  "auditorPrivilegedPort": 40052,
+  "auditorAdminPort": 40053,
+  "auditorPrometheusPort": 8080,
+  "auditorCertHolderId": "auditor",
+  "auditorCertVersion": 1,
+
+  "adminEntityId": "admin",
+  "adminCertVersion": 1,
+  "adminCertPath": "./cert/admin-cert.pem",
+  "adminPrivateKeyPath": "./cert/admin-key.pem",
+
+  "clientEntityId": "client",
+  "clientCertVersion": 1,
+
+  "_comment_replicas": "For smoke tests we run 1 replica each (user pref 2026-05-12). Skill production default is 3 (configured via SKILL.md A4 Q&A in user runs).",
+  "ledgerReplicaCount": 1,
+  "auditorReplicaCount": 1,
+  "envoyReplicaCount": 1,
+
+  "_comment_3": "JDBC PostgreSQL per plan-009 D3 (DB backend) + D12 (host Docker container, accessed from pod via host.minikube.internal).",
+  "ledgerScalarDbContactPoints": "jdbc:postgresql://host.minikube.internal:5432/ledger",
+  "ledgerScalarDbStorage": "jdbc",
+  "auditorScalarDbContactPoints": "jdbc:postgresql://host.minikube.internal:5432/auditor",
+  "auditorScalarDbStorage": "jdbc",
+
+  "licenseType": "trial",
+
+  "pkiOutDir": "./cert",
+  "pkiValidityDays": 3650,
+
+  "_comment_4": "TLS CA paths only used when tlsEnabled=true (p8). Empty defaults are safe under {{#tlsEnabled}} guards.",
+  "tlsClientLedgerCaPath": "",
+  "tlsClientAuditorCaPath": ""
+}

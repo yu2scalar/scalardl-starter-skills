@@ -1,0 +1,250 @@
+package {{PACKAGE_NAME}}.service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.github.mustachejava.DefaultMustacheFactory;
+import com.github.mustachejava.Mustache;
+import com.github.mustachejava.MustacheFactory;
+import {{PACKAGE_NAME}}.dto.FunctionDefinition;
+import {{PACKAGE_NAME}}.util.VersionUtil;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Renders Function Java source from a {@link FunctionDefinition}. The op picks one of the
+ * {@code resources/function-templates/<OP>.java.mustache} templates (UPSERT_RECORD /
+ * UPSERT_RECORDS), using the schema.json the user supplied to drive the column types.
+ *
+ * <p>The Function reads the same JSON the Contract received (the {@code contractArgument}
+ * parameter), so each ScalarDB column is mapped directly to an input field name.
+ */
+@Slf4j
+@Service
+public class FunctionGenerator {
+
+    private static final MustacheFactory MUSTACHE_FACTORY = new DefaultMustacheFactory();
+
+    public String generate(FunctionDefinition definition) throws IOException {
+        validate(definition);
+
+        String className = VersionUtil.getVersionedName(definition.getName(), definition.getVersion());
+        FunctionDefinition.Op op = definition.getOp();
+        String templatePath = "function-templates/" + op.name() + ".java.mustache";
+
+        ParsedSchema parsed = parseSchema(definition.getScalarDbSchema());
+        Map<String, Object> ctx = buildContext(definition, parsed, className);
+
+        try (Reader reader = openTemplate(templatePath)) {
+            Mustache mustache = MUSTACHE_FACTORY.compile(reader, op.name());
+            StringWriter out = new StringWriter();
+            mustache.execute(out, ctx).flush();
+            return out.toString();
+        }
+    }
+
+    private Map<String, Object> buildContext(FunctionDefinition def, ParsedSchema schema, String className) {
+        Map<String, Object> ctx = new HashMap<>();
+        ctx.put("className", className);
+        ctx.put("packageName", def.getPackageName());
+        ctx.put("name", def.getName());
+        ctx.put("version", def.getVersion());
+        ctx.put("namespace", schema.namespace);
+        ctx.put("tableName", schema.tableName);
+
+        Set<String> partitionKeySet = new HashSet<>(schema.partitionKey);
+        Set<String> clusteringKeySet = new HashSet<>(schema.clusteringKey);
+        Map<String, String> mappings = def.getMappings();
+
+        List<MappingView> partitionKeyMappings = new ArrayList<>();
+        for (String col : schema.partitionKey) {
+            partitionKeyMappings.add(MappingView.forKey(col, mappings.get(col), schema.columnTypes.get(col)));
+        }
+
+        List<MappingView> clusteringKeyMappings = new ArrayList<>();
+        for (String col : schema.clusteringKey) {
+            clusteringKeyMappings.add(MappingView.forKey(col, mappings.get(col), schema.columnTypes.get(col)));
+        }
+
+        List<MappingView> nonKeyMappings = new ArrayList<>();
+        Set<String> requiredInputFields = new HashSet<>();
+        for (Map.Entry<String, String> e : schema.columnTypes.entrySet()) {
+            String col = e.getKey();
+            if (partitionKeySet.contains(col) || clusteringKeySet.contains(col)) {
+                requiredInputFields.add(mappings.get(col));
+                continue;
+            }
+            nonKeyMappings.add(MappingView.forValue(col, mappings.get(col), e.getValue()));
+            requiredInputFields.add(mappings.get(col));
+        }
+
+        ctx.put("partitionKeyMappings", partitionKeyMappings);
+        ctx.put("clusteringKeyMappings", clusteringKeyMappings);
+        ctx.put("hasClusteringKey", !schema.clusteringKey.isEmpty());
+        ctx.put("nonKeyMappings", nonKeyMappings);
+        ctx.put("requiredInputFields", new ArrayList<>(requiredInputFields));
+        return ctx;
+    }
+
+    private static ParsedSchema parseSchema(JsonNode schemaJson) {
+        if (schemaJson == null || !schemaJson.fieldNames().hasNext()) {
+            throw new IllegalArgumentException("scalarDbSchema must contain exactly one namespace.table entry");
+        }
+        Iterator<String> keys = schemaJson.fieldNames();
+        String fullName = keys.next();
+        if (keys.hasNext()) {
+            throw new IllegalArgumentException("scalarDbSchema must contain exactly one namespace.table entry");
+        }
+        int dot = fullName.indexOf('.');
+        if (dot <= 0 || dot == fullName.length() - 1) {
+            throw new IllegalArgumentException("scalarDbSchema key must be 'namespace.table', got: " + fullName);
+        }
+        ParsedSchema parsed = new ParsedSchema();
+        parsed.namespace = fullName.substring(0, dot);
+        parsed.tableName = fullName.substring(dot + 1);
+
+        JsonNode tableNode = schemaJson.get(fullName);
+        parsed.partitionKey = stripDirectionSuffixes(readStringArray(tableNode, "partition-key"));
+        parsed.clusteringKey = stripDirectionSuffixes(readStringArray(tableNode, "clustering-key"));
+        if (parsed.partitionKey.isEmpty()) {
+            throw new IllegalArgumentException("scalarDbSchema.partition-key must contain at least one column");
+        }
+
+        JsonNode columnsNode = tableNode.get("columns");
+        if (columnsNode == null || !columnsNode.isObject()) {
+            throw new IllegalArgumentException("scalarDbSchema.columns is required");
+        }
+        parsed.columnTypes = new HashMap<>();
+        // Jackson 2.18+ replaced JsonNode.fields() (deprecated) with properties();
+        // both return Map.Entry<String, JsonNode> but the new API is iterable directly.
+        for (Map.Entry<String, JsonNode> e : columnsNode.properties()) {
+            parsed.columnTypes.put(e.getKey(), e.getValue().asText().toUpperCase());
+        }
+        return parsed;
+    }
+
+    /**
+     * ScalarDB Schema Loader allows clustering-key (and partition-key) entries to carry an
+     * optional direction suffix: {@code "created_at ASC"}, {@code "item DESC"}. Strip it so the
+     * downstream column / mapping lookups (which key on the bare column name) succeed.
+     */
+    private static List<String> stripDirectionSuffixes(List<String> rawKeys) {
+        List<String> stripped = new ArrayList<>(rawKeys.size());
+        for (String entry : rawKeys) {
+            int sp = entry.indexOf(' ');
+            stripped.add(sp < 0 ? entry : entry.substring(0, sp).trim());
+        }
+        return stripped;
+    }
+
+    private static List<String> readStringArray(JsonNode node, String field) {
+        List<String> out = new ArrayList<>();
+        JsonNode arr = node.get(field);
+        if (arr == null || !arr.isArray()) {
+            return out;
+        }
+        for (JsonNode item : arr) {
+            out.add(item.asText());
+        }
+        return out;
+    }
+
+    private static Reader openTemplate(String path) {
+        var stream = FunctionGenerator.class.getClassLoader().getResourceAsStream(path);
+        if (stream == null) {
+            throw new IllegalStateException("Template not found on classpath: " + path);
+        }
+        return new InputStreamReader(stream, StandardCharsets.UTF_8);
+    }
+
+    private static void validate(FunctionDefinition def) {
+        if (def.getName() == null || def.getName().isEmpty()) {
+            throw new IllegalArgumentException("FunctionDefinition.name is required");
+        }
+        if (def.getVersion() == null) {
+            throw new IllegalArgumentException("FunctionDefinition.version is required");
+        }
+        if (def.getPackageName() == null) {
+            throw new IllegalArgumentException("FunctionDefinition.packageName is required");
+        }
+        if (def.getOp() == null) {
+            throw new IllegalArgumentException("FunctionDefinition.op is required (UPSERT_RECORD or UPSERT_RECORDS)");
+        }
+        if (def.getMappings() == null || def.getMappings().isEmpty()) {
+            throw new IllegalArgumentException("FunctionDefinition.mappings is required (column → input field)");
+        }
+        if (def.getScalarDbSchema() == null) {
+            throw new IllegalArgumentException("FunctionDefinition.scalarDbSchema is required");
+        }
+    }
+
+    private static class ParsedSchema {
+        String namespace;
+        String tableName;
+        List<String> partitionKey;
+        List<String> clusteringKey;
+        Map<String, String> columnTypes;
+    }
+
+    /** Mustache view of one column → input-field mapping. {@code addMethod} / {@code valueMethod}
+     *  / {@code extractMethod} pre-compute the right ScalarDB and JsonNode method names per column type. */
+    public static class MappingView {
+        public final String column;
+        public final String inputField;
+        public final String addMethod;       // for Key.Builder: addText / addInt / ...
+        public final String valueMethod;     // for Put.Builder: textValue / intValue / ...
+        public final String extractMethod;   // for JsonNode:    asText / asInt / ...
+
+        private MappingView(String column, String inputField, String addMethod, String valueMethod, String extractMethod) {
+            this.column = column;
+            this.inputField = inputField;
+            this.addMethod = addMethod;
+            this.valueMethod = valueMethod;
+            this.extractMethod = extractMethod;
+        }
+
+        static MappingView forKey(String column, String inputField, String type) {
+            requireMapping(column, inputField);
+            String[] m = methodsFor(type);
+            return new MappingView(column, inputField, m[0], m[1], m[2]);
+        }
+
+        static MappingView forValue(String column, String inputField, String type) {
+            requireMapping(column, inputField);
+            String[] m = methodsFor(type);
+            return new MappingView(column, inputField, m[0], m[1], m[2]);
+        }
+
+        private static void requireMapping(String column, String inputField) {
+            if (inputField == null) {
+                throw new IllegalArgumentException("mapping is missing for column: " + column);
+            }
+        }
+
+        /** @return [addMethod, valueMethod, extractMethod] for the ScalarDB column type. */
+        private static String[] methodsFor(String type) {
+            switch (type) {
+                case "TEXT":    return new String[] {"addText",    "textValue",    "asText"};
+                case "INT":     return new String[] {"addInt",     "intValue",     "asInt"};
+                case "BIGINT":  return new String[] {"addBigInt",  "bigIntValue",  "asLong"};
+                case "FLOAT":   return new String[] {"addFloat",   "floatValue",   "floatValue"};
+                case "DOUBLE":  return new String[] {"addDouble",  "doubleValue",  "asDouble"};
+                case "BOOLEAN": return new String[] {"addBoolean", "booleanValue", "asBoolean"};
+                default:
+                    throw new IllegalArgumentException("Unsupported ScalarDB column type: " + type
+                            + " (supported in v0.1.0: TEXT/INT/BIGINT/FLOAT/DOUBLE/BOOLEAN)");
+            }
+        }
+    }
+}

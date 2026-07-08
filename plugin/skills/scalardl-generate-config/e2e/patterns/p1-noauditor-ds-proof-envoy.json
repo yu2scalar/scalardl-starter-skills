@@ -1,0 +1,16 @@
+{
+  "patternName": "p1-noauditor-ds-proof-envoy",
+  "description": "Ledger-only / DS / AssetProof=Yes / envoy-loadbalancer / TLS=off. The simplest production-ish DS shape; the baseline.",
+  "context": {
+    "auditor": false,
+    "dsPattern": true,
+    "hmacPattern": false,
+    "authMethod": "digital-signature",
+    "proofEnabled": true,
+    "envoyLoadBalancer": true,
+    "adminLedgerHost": "<LEDGER_EXTERNAL_IP>",
+    "tlsEnabled": false,
+    "tlsServerServer": false,
+    "licensing": true
+  }
+}

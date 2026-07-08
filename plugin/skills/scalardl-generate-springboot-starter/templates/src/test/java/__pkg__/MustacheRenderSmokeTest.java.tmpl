@@ -1,0 +1,247 @@
+package {{PACKAGE_NAME}};
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import {{PACKAGE_NAME}}.dto.ContractDefinition;
+import {{PACKAGE_NAME}}.dto.FunctionDefinition;
+import {{PACKAGE_NAME}}.service.ContractGenerator;
+import {{PACKAGE_NAME}}.service.FunctionGenerator;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * Verifies every supported op renders into syntactically clean Java (no {@code {{ }}} placeholders
+ * left over, expected class declaration present). Does not require a running ScalarDL Ledger.
+ *
+ * <p>v0.3.0 preset matrix: Contract = READ_ASSET / PUT_ASSET / PUT_ASSETS;
+ * Function = UPSERT_RECORD / UPSERT_RECORDS.
+ */
+@SpringBootTest
+class MustacheRenderSmokeTest {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    @Autowired ContractGenerator contractGenerator;
+    @Autowired FunctionGenerator functionGenerator;
+
+    @Test
+    void rendersContractReadAssetDefaultLatest() throws Exception {
+        ContractDefinition def = sampleContract(ContractDefinition.Op.READ_ASSET);
+        String out = contractGenerator.generate(def);
+        assertTrue(out.contains("class TestContractV1_0_0 extends JacksonBasedContract"), out);
+        assertTrue(out.contains("Contract preset = READ_ASSET"), out);
+        // AssetFilter built + scan called
+        assertTrue(out.contains("new AssetFilter(assetId)"), out);
+        assertTrue(out.contains("ledger.scan(filter)"), out);
+        // v0.3.0 default flip: historyLimit=1 (latest only); explicit 0 = unlimited
+        assertTrue(out.contains("argument.has(\"historyLimit\") ? argument.get(\"historyLimit\").asInt() : 1"), out);
+        assertTrue(out.contains("if (historyLimit > 0)"), out);
+        assertTrue(out.contains("filter.withLimit(historyLimit)"), out);
+        // Other runtime scan params still supported (option D from plan-004)
+        assertTrue(out.contains("argument.has(\"ageOrder\")"), out);
+        assertTrue(out.contains("argument.has(\"startAge\")"), out);
+        assertTrue(out.contains("argument.has(\"endAge\")"), out);
+        // Default ageOrder = DESC (newest first)
+        assertTrue(out.contains("\"DESC\""), out);
+        // Response shape: { "count": N, "asset_records": [...] } regardless of count
+        assertTrue(out.contains("response.put(\"count\""), out);
+        assertTrue(out.contains("response.putArray(\"asset_records\")"), out);
+        assertFalse(out.contains("{{"), out);
+        // File-header guidance carries
+        assertTrue(out.contains("Common extensions"), out);
+        assertTrue(out.contains("Immutability"), out);
+        assertTrue(out.contains("@param ledger"), out);
+        assertTrue(out.contains("setContext("), out);
+    }
+
+    @Test
+    void rendersContractPutAsset() throws Exception {
+        ContractDefinition def = sampleContract(ContractDefinition.Op.PUT_ASSET);
+        String out = contractGenerator.generate(def);
+        assertTrue(out.contains("class TestContractV1_0_0 extends JacksonBasedContract"), out);
+        assertTrue(out.contains("Contract preset = PUT_ASSET"), out);
+        // Both branches present in the rendered code
+        assertTrue(out.contains("if (existing.isEmpty())"), out);
+        assertTrue(out.contains("\"status\", \"created\""), out);     // absent branch
+        assertTrue(out.contains("\"status\", \"modified\""), out);    // present branch
+        assertTrue(out.contains("previousAge"), out);                   // present branch returns previousAge
+        // The TODO label is structured for Claude Code prompts
+        assertTrue(out.contains("TODO (modify)"), out);
+        // append-only versioning hint in the header (correcting the prior "upsert" misstatement)
+        assertTrue(out.contains("append-only versioning"), out);
+        assertFalse(out.contains("{{"), out);
+        // File-header guidance carries
+        assertTrue(out.contains("Common extensions"), out);
+        assertTrue(out.contains("Immutability"), out);
+        assertTrue(out.contains("@param ledger"), out);
+        assertTrue(out.contains("setContext("), out);
+    }
+
+    @Test
+    void rendersContractPutAssets() throws Exception {
+        ContractDefinition def = sampleContract(ContractDefinition.Op.PUT_ASSETS);
+        String out = contractGenerator.generate(def);
+        assertTrue(out.contains("class TestContractV1_0_0 extends JacksonBasedContract"), out);
+        assertTrue(out.contains("Contract preset = PUT_ASSETS"), out);
+        // Multi-asset shape: argument.assets array, ArrayNode handling, per-entry id construction
+        assertTrue(out.contains("argument.get(\"assets\")"), out);
+        assertTrue(out.contains("ArrayNode inputs"), out);
+        // assetIdExpressionFromInputItem renders to in.get("...").asText()
+        assertTrue(out.contains("in.get(\"userName\").asText()"), out);
+        // Per-entry validation, snapshot read, modify TODO, atomic put-back
+        assertTrue(out.contains("missing required field in assets[]"), out);
+        assertTrue(out.contains("ledger.get(assetId).orElse(null)"), out);
+        assertTrue(out.contains("TODO (multi-asset modify)"), out);
+        assertTrue(out.contains("ledger.put(assetIds.get(i)"), out);
+        // Per-asset summary in the response
+        assertTrue(out.contains("\"count\""), out);
+        assertTrue(out.contains("\"previousAge\""), out);
+        // append-only versioning hint
+        assertTrue(out.contains("append-only versioning"), out);
+        assertFalse(out.contains("{{"), out);
+    }
+
+    @Test
+    void rendersFunctionUpsertRecordAllText() throws Exception {
+        FunctionDefinition def = sampleFunction(FunctionDefinition.Op.UPSERT_RECORD, /* withMixedTypes */ false);
+        String out = functionGenerator.generate(def);
+        assertTrue(out.contains("class TestFunctionV1_0_0 extends JacksonBasedFunction"), out);
+        assertTrue(out.contains("Function preset = UPSERT_RECORD"), out);
+        // Put-builder body
+        assertTrue(out.contains(".addText(\"user_id\""), out);
+        assertTrue(out.contains(".textValue(\"address\""), out);
+        // Status string + commented-out getContractContext sample present
+        assertTrue(out.contains("\"status\", \"upserted\""), out);
+        assertTrue(out.contains("getContractContext()"), out);
+        // Pairing hint for PUT_ASSET / PUT_ASSETS in the header
+        assertTrue(out.contains("PUT_ASSET"), out);
+        // Naming rationale: explains why UPSERT_RECORD (not PUT_RECORD) re Put deprecation
+        assertTrue(out.contains("Put"), out);
+        // Function-specific versioning header
+        assertTrue(out.contains("Versioning (Function-specific)"), out);
+        assertTrue(out.contains("FunctionManager.register"), out);
+        assertFalse(out.contains("{{"), out);
+        assertTrue(out.contains("@param database"), out);
+        assertTrue(out.contains("@param contractArgument"), out);
+    }
+
+    @Test
+    void rendersFunctionUpsertRecordMixedTypes() throws Exception {
+        FunctionDefinition def = sampleFunction(FunctionDefinition.Op.UPSERT_RECORD, /* withMixedTypes */ true);
+        String out = functionGenerator.generate(def);
+        assertTrue(out.contains(".addText(\"user_id\""), out);                  // partition key (TEXT)
+        assertTrue(out.contains(".addBigInt(\"created_at\""), out);             // clustering key (BIGINT)
+        assertTrue(out.contains(".intValue(\"age\""), out);                     // non-key INT
+        assertTrue(out.contains(".doubleValue(\"score\""), out);                // non-key DOUBLE
+        assertTrue(out.contains(".booleanValue(\"active\""), out);              // non-key BOOLEAN
+        assertFalse(out.contains("{{"), out);
+    }
+
+    @Test
+    void rendersFunctionUpsertRecords() throws Exception {
+        FunctionDefinition def = sampleFunction(FunctionDefinition.Op.UPSERT_RECORDS, /* withMixedTypes */ false);
+        String out = functionGenerator.generate(def);
+        assertTrue(out.contains("class TestFunctionV1_0_0 extends JacksonBasedFunction"), out);
+        assertTrue(out.contains("Function preset = UPSERT_RECORDS"), out);
+        // Iteration shape: contractArgument.assets[]
+        assertTrue(out.contains("contractArgument.has(\"assets\")"), out);
+        assertTrue(out.contains("contractArgument.get(\"assets\")"), out);
+        assertTrue(out.contains("ArrayNode entries"), out);
+        assertTrue(out.contains("for (JsonNode entry : entries)"), out);
+        // Per-element validation + put via entry.get("...")
+        assertTrue(out.contains("missing required field in assets[]"), out);
+        assertTrue(out.contains("entry.get(\"userName\")"), out);
+        assertTrue(out.contains("database.put(put)"), out);
+        assertTrue(out.contains("\"status\", \"upsertedAll\""), out);
+        assertTrue(out.contains("\"count\", count"), out);
+        // Pairing hint for PUT_ASSETS in the header
+        assertTrue(out.contains("PUT_ASSETS"), out);
+        assertFalse(out.contains("{{"), out);
+    }
+
+    @Test
+    void rendersFunctionWithClusteringKeyDirection() throws Exception {
+        // ScalarDB Schema Loader allows clustering-key entries with a direction suffix:
+        //   "clustering-key": ["created_at ASC", "seq DESC"]
+        // FunctionGenerator must strip the direction before looking up column types and mappings;
+        // otherwise the lookup keys on "created_at ASC" instead of "created_at" and the build
+        // fails with "mapping is missing for column: created_at ASC". Regression guard for v0.2.5.
+        FunctionDefinition def = new FunctionDefinition();
+        def.setName("TestFunction");
+        def.setVersion("1.0.0");
+        def.setPackageName("com.example.functions");
+        def.setOp(FunctionDefinition.Op.UPSERT_RECORD);
+        def.setLinkedContractId("TestContractV1_0_0");
+        // Two clustering-key entries — one with ASC, one bare — and one partition key.
+        String schemaJson = "{\"demo.events\":{\"transaction\":true,"
+                + "\"partition-key\":[\"user_id\"],"
+                + "\"clustering-key\":[\"created_at ASC\",\"seq\"],"
+                + "\"columns\":{\"user_id\":\"TEXT\",\"created_at\":\"BIGINT\","
+                + "\"seq\":\"INT\",\"payload\":\"TEXT\"}}}";
+        def.setMappings(Map.of(
+                "user_id", "userName",
+                "created_at", "createdAt",
+                "seq", "sequence",
+                "payload", "data"));
+        def.setScalarDbSchema(MAPPER.readTree(schemaJson));
+
+        String out = functionGenerator.generate(def);
+        // Both clustering-key columns must appear with their bare names (no " ASC" leakage)
+        assertTrue(out.contains(".addBigInt(\"created_at\""), out);
+        assertTrue(out.contains(".addInt(\"seq\""), out);
+        assertFalse(out.contains("created_at ASC"), out);
+        assertFalse(out.contains("\"seq DESC\""), out);
+        assertFalse(out.contains("{{"), out);
+    }
+
+    private static ContractDefinition sampleContract(ContractDefinition.Op op) {
+        ContractDefinition def = new ContractDefinition();
+        def.setName("TestContract");
+        def.setVersion("1.0.0");
+        def.setPackageName("com.example.contracts");
+        def.setOp(op);
+        def.setAssetIdFields(List.of("userName"));
+        return def;
+    }
+
+    private static FunctionDefinition sampleFunction(FunctionDefinition.Op op, boolean withMixedTypes) throws Exception {
+        FunctionDefinition def = new FunctionDefinition();
+        def.setName("TestFunction");
+        def.setVersion("1.0.0");
+        def.setPackageName("com.example.functions");
+        def.setOp(op);
+        def.setLinkedContractId("TestContractV1_0_0");
+
+        String schemaJson;
+        if (withMixedTypes) {
+            schemaJson = "{\"demo.users\":{\"transaction\":true,"
+                    + "\"partition-key\":[\"user_id\"],"
+                    + "\"clustering-key\":[\"created_at\"],"
+                    + "\"columns\":{\"user_id\":\"TEXT\",\"created_at\":\"BIGINT\","
+                    + "\"age\":\"INT\",\"score\":\"DOUBLE\",\"active\":\"BOOLEAN\"}}}";
+            def.setMappings(Map.of(
+                    "user_id", "userName",
+                    "created_at", "createdAt",
+                    "age", "age",
+                    "score", "score",
+                    "active", "active"));
+        } else {
+            schemaJson = "{\"demo.users\":{\"transaction\":true,"
+                    + "\"partition-key\":[\"user_id\"],"
+                    + "\"columns\":{\"user_id\":\"TEXT\",\"address\":\"TEXT\",\"email\":\"TEXT\"}}}";
+            def.setMappings(Map.of(
+                    "user_id", "userName",
+                    "address", "userAddress",
+                    "email", "email"));
+        }
+        JsonNode schema = MAPPER.readTree(schemaJson);
+        def.setScalarDbSchema(schema);
+        return def;
+    }
+}

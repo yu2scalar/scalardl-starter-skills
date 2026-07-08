@@ -1,0 +1,55 @@
+package {{PACKAGE_NAME}}.util;
+
+/**
+ * Helpers for the {@code <Base>V<Major>_<Minor>_<Patch>} versioning convention used by
+ * generated Contracts and Functions.
+ *
+ * <p>ScalarDL has different update rules for Contract vs Function:
+ * <ul>
+ *   <li><b>Contract</b> is strictly immutable. Once registered, its class name + bytecode cannot be
+ *       updated; ScalarDL's {@code ContractManager} throws {@code CONTRACT_ALREADY_REGISTERED} on
+ *       any re-register attempt. Bug fixes mean a new versioned class name.</li>
+ *   <li><b>Function</b> can be overwritten by re-register (same id, new bytecode). The skill still
+ *       emits versioned class names for Functions because audit/debug/rollback benefit from
+ *       distinct ids — but that's a convention, not a ScalarDL hard rule.</li>
+ * </ul>
+ *
+ * <p>The version suffix encodes a SemVer triple to make versioned class names both
+ * human-readable and collision-free.
+ */
+public final class VersionUtil {
+
+    private VersionUtil() {}
+
+    /**
+     * Combine a base name with a SemVer string into a class name.
+     *
+     * <p>Example: {@code getVersionedName("OrderUpdater", "1.0.0")} returns {@code "OrderUpdaterV1_0_0"}.
+     *
+     * @throws IllegalArgumentException if {@code version} does not match {@code <int>.<int>.<int>}.
+     */
+    public static String getVersionedName(String baseName, String version) {
+        if (baseName == null || baseName.isEmpty()) {
+            throw new IllegalArgumentException("baseName must not be empty");
+        }
+        if (version == null || !version.matches("\\d+\\.\\d+\\.\\d+")) {
+            throw new IllegalArgumentException(
+                    "version must look like '1.0.0', got: " + version);
+        }
+        return baseName + "V" + version.replace('.', '_');
+    }
+
+    /**
+     * The file path under {@code definitions/} that the JSON definition is persisted at.
+     *
+     * <p>Example: {@code definitionFileName("OrderUpdater", "1.0.0")} returns
+     * {@code "OrderUpdater_V1_0_0.json"}.
+     */
+    public static String definitionFileName(String baseName, String version) {
+        if (version == null || !version.matches("\\d+\\.\\d+\\.\\d+")) {
+            throw new IllegalArgumentException(
+                    "version must look like '1.0.0', got: " + version);
+        }
+        return baseName + "_V" + version.replace('.', '_') + ".json";
+    }
+}

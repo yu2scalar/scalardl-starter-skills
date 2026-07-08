@@ -1,0 +1,104 @@
+package {{PACKAGE_NAME}}.dto;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.JsonNode;
+import lombok.Data;
+
+import java.util.Map;
+
+/**
+ * Definition for a generated Function. POST this JSON to {@code /api/functions/register}.
+ *
+ * <p>The Function is invoked together with its linked Contract; both writes commit (or roll back)
+ * atomically. The Function reads the same JSON the Contract received (no separate
+ * {@code functionArgument} is required from the client). Each ScalarDB column is mapped to a field
+ * name in that input.
+ *
+ * <p>Operations supported:
+ * <ul>
+ *   <li>{@code UPSERT_RECORD}  — write a single ScalarDB record (row). Calls
+ *                                 {@code database.put(Put)}. Pairs with single-asset Contracts
+ *                                 ({@link ContractDefinition.Op#PUT_ASSET}). Note: ScalarDB's
+ *                                 {@code Put} is being deprecated in favour of explicit
+ *                                 {@code Insert} / {@code Upsert}; the chosen name here aligns
+ *                                 with the upsert successor (Function-side exposure under
+ *                                 consideration).</li>
+ *   <li>{@code UPSERT_RECORDS} — multi-record variant. Iterates {@code contractArgument.assets[]}
+ *                                 and writes one row per entry. Pairs with multi-asset Contracts
+ *                                 ({@link ContractDefinition.Op#PUT_ASSETS}). Homogeneous shapes
+ *                                 only (same {@code mappings} input fields per entry).</li>
+ * </ul>
+ *
+ * <p>Example:
+ * <pre>
+ * {
+ *   "name": "UserAccountFunction",
+ *   "version": "1.0.0",
+ *   "packageName": "com.example.functions",
+ *   "op": "UPSERT_RECORD",
+ *   "linkedContractId": "UserAccountV1_0_0",
+ *   "scalarDbSchema": {
+ *     "demo.users": {
+ *       "transaction": true,
+ *       "partition-key": ["user_id"],
+ *       "columns": {
+ *         "user_id": "TEXT",
+ *         "address": "TEXT",
+ *         "email":   "TEXT"
+ *       }
+ *     }
+ *   },
+ *   "mappings": {
+ *     "user_id": "userName",
+ *     "address": "userAddress",
+ *     "email":   "email"
+ *   }
+ * }
+ * </pre>
+ */
+@Data
+@JsonInclude(JsonInclude.Include.NON_NULL)
+public class FunctionDefinition {
+
+    public enum Op {
+        /**
+         * Write a single ScalarDB record (row). Calls {@code database.put(Put)} on one row built
+         * from the {@code mappings}. ScalarDL's Function {@code Database} interface only exposes
+         * {@code put} today (which forces an implicit pre-read = upsert semantics at the storage
+         * layer), so this preset's body is "build a Put, call database.put". The template
+         * includes a commented-out {@code getContractContext} sample showing how to consume a
+         * value the Contract computed (e.g. new balance after a transfer) instead of taking the
+         * field straight from {@code contractArgument}. Pairs with single-asset Contracts
+         * ({@link ContractDefinition.Op#PUT_ASSET}).
+         */
+        UPSERT_RECORD,
+        /**
+         * Multi-record variant of {@link #UPSERT_RECORD}. Pairs with a Contract whose input shape
+         * is {@code { "assets": [...] }} — typically {@link ContractDefinition.Op#PUT_ASSETS}.
+         * Iterates {@code contractArgument.assets[]} and writes one row per entry via
+         * {@code database.put}. Homogeneous shapes only (every entry has the same {@code mappings}
+         * input fields). Heterogeneous shapes are out of scope; fork the template if needed.
+         */
+        UPSERT_RECORDS
+    }
+
+    private String name;
+    private String version;
+    private String packageName;
+
+    /** Operation. Required: {@link Op#UPSERT_RECORD} for single-asset, {@link Op#UPSERT_RECORDS} for multi-asset. */
+    private Op op;
+
+    /** {@code <Base>V<Major>_<Minor>_<Patch>} of the Contract this Function pairs with. */
+    private String linkedContractId;
+
+    /**
+     * The ScalarDB Schema Loader JSON. Exactly one top-level key, formatted {@code namespace.table}.
+     * Inside, {@code partition-key}, optional {@code clustering-key}, and {@code columns} drive
+     * code generation.
+     */
+    private JsonNode scalarDbSchema;
+
+    /** Column name → input JSON field name. Every column listed in {@code scalarDbSchema} must be mapped. */
+    private Map<String, String> mappings;
+}

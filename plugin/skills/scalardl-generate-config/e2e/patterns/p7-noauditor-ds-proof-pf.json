@@ -1,0 +1,16 @@
+{
+  "patternName": "p7-noauditor-ds-proof-pf",
+  "description": "Ledger-only / DS / AssetProof=Yes / port-forward / TLS=off. Connection-mode variant: admin connects via `kubectl port-forward`, not LoadBalancer. envoy.service.type stays ClusterIP (chart default).",
+  "context": {
+    "auditor": false,
+    "dsPattern": true,
+    "hmacPattern": false,
+    "authMethod": "digital-signature",
+    "proofEnabled": true,
+    "envoyLoadBalancer": false,
+    "adminLedgerHost": "localhost",
+    "tlsEnabled": false,
+    "tlsServerServer": false,
+    "licensing": true
+  }
+}

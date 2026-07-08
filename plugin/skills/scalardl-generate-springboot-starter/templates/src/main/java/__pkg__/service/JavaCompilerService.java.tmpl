@@ -1,0 +1,152 @@
+package {{PACKAGE_NAME}}.service;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import javax.tools.Diagnostic;
+import javax.tools.DiagnosticCollector;
+import javax.tools.JavaCompiler;
+import javax.tools.JavaFileObject;
+import javax.tools.StandardJavaFileManager;
+import javax.tools.ToolProvider;
+import java.io.File;
+import java.io.IOException;
+import java.io.StringWriter;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * Compiles a single Contract or Function {@code .java} into a {@code .class}, using the in-process
+ * {@link javax.tools.JavaCompiler}. Only available when the JVM is a JDK (not a JRE).
+ *
+ * <p>The compiled bytecode targets {@code --release 17}. ScalarDL Ledger v3.13.0+ (the minimum this
+ * skill supports) runs on a Java 21 JRE and loads Contract/Function classes through that JVM, so
+ * any class file at version 61.0 (Java 17) or earlier is loadable. This lets generated Contracts /
+ * Functions use modern Java APIs like {@code Optional.isEmpty()} (Java 11+), records, sealed
+ * classes, and switch expressions.
+ *
+ * <p>Earlier ScalarDL Ledger versions (3.12.x and below) used a Java 8 JRE container and could not
+ * load Java 11+ bytecode. This skill explicitly does NOT support those versions — see
+ * {@code SKILL.md} A3 SDK version validation.
+ */
+@Slf4j
+@Service
+public class JavaCompilerService {
+
+    private static final String BASE_DIR = System.getProperty("user.dir");
+    private static final String GENERATED_DIR = BASE_DIR + "/generated";
+    private static final String COMPILED_DIR = BASE_DIR + "/compiled";
+
+    public CompilationResult compileContract(String versionedClassName) throws IOException {
+        return compile(
+                GENERATED_DIR + "/contracts/" + versionedClassName + ".java",
+                COMPILED_DIR + "/contracts");
+    }
+
+    public CompilationResult compileFunction(String versionedClassName) throws IOException {
+        return compile(
+                GENERATED_DIR + "/functions/" + versionedClassName + ".java",
+                COMPILED_DIR + "/functions");
+    }
+
+    private CompilationResult compile(String sourceFilePath, String outputDir) throws IOException {
+        File sourceFile = new File(sourceFilePath);
+        if (!sourceFile.exists()) {
+            return CompilationResult.failure("Source file not found: " + sourceFilePath);
+        }
+
+        Files.createDirectories(Paths.get(outputDir));
+
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        if (compiler == null) {
+            return CompilationResult.failure(
+                    "Java compiler not available. Run with a JDK (not JRE).");
+        }
+
+        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
+
+            Iterable<? extends JavaFileObject> compilationUnits =
+                    fileManager.getJavaFileObjectsFromFiles(List.of(sourceFile));
+
+            // Target Java 17 bytecode (class version 61.0). Loadable by ScalarDL Ledger v3.13.0+
+            // (which ships on a Java 21 JRE). For older Ledger versions (Java 8 JRE), this will
+            // produce UnsupportedClassVersionError at register time — but this skill targets 3.13+
+            // exclusively (see SKILL.md A3 validation).
+            List<String> options = Arrays.asList(
+                    "-d", outputDir,
+                    "-cp", buildClasspath(),
+                    "--release", "17");
+
+            StringWriter compilerOutput = new StringWriter();
+            JavaCompiler.CompilationTask task =
+                    compiler.getTask(compilerOutput, fileManager, diagnostics, options, null, compilationUnits);
+
+            boolean success = task.call();
+            if (success) {
+                String fqcn = readFullyQualifiedClassName(sourceFilePath);
+                String classPath = outputDir + "/" + fqcn.replace('.', '/') + ".class";
+                log.info("Compiled {} → {}", sourceFile.getName(), classPath);
+                return CompilationResult.success(classPath, fqcn);
+            }
+
+            StringBuilder errors = new StringBuilder();
+            for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
+                errors.append(String.format(
+                        "Line %d: %s%n", diagnostic.getLineNumber(), diagnostic.getMessage(null)));
+            }
+            log.error("Compilation failed for {}:\n{}", sourceFile.getName(), errors);
+            return CompilationResult.failure(errors.toString());
+        }
+    }
+
+    /** Use the running app's classpath so that ScalarDL SDK + Spring Boot deps are visible to compiled units. */
+    private String buildClasspath() {
+        String runtime = System.getProperty("java.class.path", "");
+        return BASE_DIR + "/build/classes/java/main" + File.pathSeparator + runtime;
+    }
+
+    private String readFullyQualifiedClassName(String sourceFilePath) throws IOException {
+        String content = Files.readString(Path.of(sourceFilePath));
+        String packageName = "";
+        int packageStart = content.indexOf("package ");
+        if (packageStart >= 0) {
+            int semicolon = content.indexOf(';', packageStart);
+            if (semicolon > packageStart) {
+                packageName = content.substring(packageStart + "package ".length(), semicolon).trim();
+            }
+        }
+        String simpleName = new File(sourceFilePath).getName().replace(".java", "");
+        return packageName.isEmpty() ? simpleName : packageName + "." + simpleName;
+    }
+
+    public static final class CompilationResult {
+        private final boolean success;
+        private final String message;
+        private final String classFilePath;
+        private final String fullyQualifiedClassName;
+
+        private CompilationResult(boolean success, String message, String classFilePath, String fqcn) {
+            this.success = success;
+            this.message = message;
+            this.classFilePath = classFilePath;
+            this.fullyQualifiedClassName = fqcn;
+        }
+
+        public static CompilationResult success(String classFilePath, String fqcn) {
+            return new CompilationResult(true, "Compilation successful", classFilePath, fqcn);
+        }
+
+        public static CompilationResult failure(String message) {
+            return new CompilationResult(false, message, null, null);
+        }
+
+        public boolean isSuccess() { return success; }
+        public String getMessage() { return message; }
+        public String getClassFilePath() { return classFilePath; }
+        public String getFullyQualifiedClassName() { return fullyQualifiedClassName; }
+    }
+}

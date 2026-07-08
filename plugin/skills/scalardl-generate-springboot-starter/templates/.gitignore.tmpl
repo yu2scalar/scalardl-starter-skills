@@ -1,0 +1,47 @@
+# Build / IDE
+build/
+.gradle/
+out/
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+*.swp
+
+# Compiled bytecode
+compiled/
+
+# Generated Java sources (regenerated from definitions/ on demand)
+generated/
+
+# ============================================================
+# Sample-grade secrets (literal values baked into the scaffold)
+#
+# This scaffold writes secret material directly into the project for
+# `./gradlew bootRun`-out-of-the-box simplicity:
+#   - cert/  contains the DS private key + cert (Branch A copies from the
+#            scalardl-generate-config bundle; Branch B is generated via the
+#            openssl 1-liner in README.md).
+#   - application.properties contains the HMAC secret_key as a LITERAL value
+#            when authentication-method=hmac (no env-var indirection).
+#
+# Do NOT commit either to a public repository. Before promoting to production,
+# move secrets to env vars / Kubernetes Secret / HashiCorp Vault / Spring
+# Cloud Config — see the warning block at the top of application.properties
+# for the recommended migration paths.
+# ============================================================
+
+# Cert / private keys (never commit secrets)
+cert/*.key
+cert/*.pem
+cert/*.pkcs8
+!cert/.gitkeep
+
+# application.properties holds the literal HMAC secret_key in HMAC mode.
+# Comment out the next line once you've moved secrets to env vars / Secret / Vault.
+src/main/resources/application.properties
+
+# Application local overrides
+src/main/resources/application-local.properties

@@ -1,0 +1,71 @@
+package {{PACKAGE_NAME}}.controller;
+
+import {{PACKAGE_NAME}}.service.JavaCompilerService;
+import {{PACKAGE_NAME}}.service.ScalarDLService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * REST endpoint for registering a Function from an already-rendered (and possibly hand-edited)
+ * source file under {@code generated/functions/<className>.java}.
+ *
+ * <p>{@code POST /api/functions/register-from-source} — compile the file at
+ * {@code generated/functions/<className>.java} and register the resulting bytecode on the Ledger.
+ * The source is <b>not regenerated</b> from a JSON definition, so any edits made after a
+ * {@code POST /api/functions/preview} call are preserved.
+ *
+ * <p>Beware: registration on the Ledger is irreversible. Bug fixes after registration require
+ * bumping the JSON {@code version} and registering a new versioned class.
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/functions")
+@RequiredArgsConstructor
+public class FunctionRegisterFromSourceController {
+
+    private final JavaCompilerService compiler;
+    private final ScalarDLService scalarDL;
+
+    @PostMapping("/register-from-source")
+    public ResponseEntity<Map<String, Object>> registerFromSource(@RequestBody RegisterFromSourceRequest request) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            String className = request.className();
+            if (className == null || className.isBlank()) {
+                response.put("error", "className is required (e.g. \"<YourFunction>V1_0_0\")");
+                return ResponseEntity.badRequest().body(response);
+            }
+            response.put("className", className);
+
+            JavaCompilerService.CompilationResult compileResult = compiler.compileFunction(className);
+            response.put("compileSuccess", compileResult.isSuccess());
+            response.put("compileMessage", compileResult.getMessage());
+            if (!compileResult.isSuccess()) {
+                return ResponseEntity.badRequest().body(response);
+            }
+            response.put("classFilePath", compileResult.getClassFilePath());
+
+            byte[] bytes = Files.readAllBytes(Path.of(compileResult.getClassFilePath()));
+            scalarDL.registerFunction(className, compileResult.getFullyQualifiedClassName(), bytes);
+            response.put("registered", true);
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Function register-from-source failed", e);
+            response.put("error", e.getMessage());
+            return ResponseEntity.internalServerError().body(response);
+        }
+    }
+
+    public record RegisterFromSourceRequest(String className) {}
+}

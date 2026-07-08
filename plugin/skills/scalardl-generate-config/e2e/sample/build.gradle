@@ -1,0 +1,52 @@
+// plan-009 W3 — minimal Gradle build for SmokeAsset.java + SmokeAssetFunction.java.
+//
+// This file is the **reproducible build** path. The pre-built .class files
+// alongside the sources are produced by running `./build.sh` (or
+// `gradle compileJava`). Re-build any time the sources change.
+//
+// Usage:
+//   gradle compileJava        # requires Gradle 8+ and a JDK 17+ installation
+//
+// Output:
+//   build/classes/java/main/com/example/contracts/SmokeAsset.class
+//   build/classes/java/main/com/example/functions/SmokeAssetFunction.class
+//
+// build.sh wraps this with javac directly when no Gradle/JDK toolchain is
+// available — see ./build.sh.
+
+plugins {
+    id 'java'
+}
+
+group = 'com.example.scalardl-starter-skills.e2e'
+version = '0.1.0-plan-009-w3'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+compileJava {
+    // Force class-file v61.0 (Java 17). ScalarDL Ledger 3.13.0+ runs on
+    // Java 21 JRE and loads v61.0 fine; on 3.12.x (Java 8 JRE) this would
+    // throw UnsupportedClassVersionError — see plan-008 D13.
+    options.release = 17
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['contracts', 'functions']
+        }
+    }
+}
+
+dependencies {
+    // ScalarDL 3.13.0 target — same as plan-008 D13 / plan-009 D4.
+    implementation 'com.scalar-labs:scalardl-java-client-sdk:3.13.0'
+    compileOnly 'javax.annotation:javax.annotation-api:1.3.2'
+}

@@ -1,0 +1,10 @@
+{
+  "name": "scalardl-starter-skills",
+  "version": "0.6.0-rc1",
+  "description": "Skills to generate ScalarDL config + Spring Boot starter project + Contract/Function JSON definitions, and to audit existing configurations. scalardl-generate-config emits a Server-side deploy + runtime client bundle (Helm values × 4, properties × 3 (ledger.as.client / auditor.as.client / client), ECDSA P-256 PKI for ledger/auditor/client (3-entity model — no separate 'admin' entity) / HMAC shared secret, license PEM injection, self-signed TLS certs with SAN when TLS enabled). scalardl-generate-springboot-starter auto-detects an adjacent scalardl-generate-config bundle to consume (Branch A) or runs standalone Q&A (Branch B), supports both DS and HMAC authentication, bakes literal sample-grade secrets into application.properties + cert/. scalardl-validate-config audits existing ScalarDL configurations (Ledger / Auditor / Client properties + Helm values) against a 16-rule catalog covering startup-blocking constraints, deprecated keys, cross-file mismatches, and AI-leverage lints (typo / enum violation / homoglyph). scalardl-add-contract / scalardl-add-function add JSON definitions for the three Contract presets (READ_ASSET / PUT_ASSET / PUT_ASSETS) and two Function presets (UPSERT_RECORD / UPSERT_RECORDS) the running app compiles and registers.",
+  "author": {
+    "name": "Yuji Ochiai",
+    "email": "yuji.ochiai@scalar-labs.com"
+  },
+  "keywords": ["scalardl", "spring-boot", "starter", "ledger", "contract", "function"]
+}

@@ -1,0 +1,18 @@
+{
+  "patternName": "p6-auditor-hmac-envoy",
+  "description": "Auditor + HMAC / envoy-loadbalancer / TLS=off. SERVERS_HMAC_SECRET_KEY must be identical in both ledger-credentials-secret and auditor-credentials-secret (server-server shared secret). proof.enabled=true forced by Auditor=Yes.",
+  "context": {
+    "auditor": true,
+    "dsPattern": false,
+    "hmacPattern": true,
+    "authMethod": "hmac",
+    "proofEnabled": true,
+    "envoyLoadBalancer": true,
+    "adminLedgerHost": "<LEDGER_EXTERNAL_IP>",
+    "adminAuditorHost": "<AUDITOR_EXTERNAL_IP>",
+    "auditorScalarDbContactPoints": "jdbc:postgresql://host.minikube.internal:5433/auditor",
+    "tlsEnabled": false,
+    "tlsServerServer": false,
+    "licensing": true
+  }
+}

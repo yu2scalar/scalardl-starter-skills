@@ -1,0 +1,26 @@
+{
+  "_comment_1": "Copy this file to e2e-config.local.json (gitignored), then edit. Used by skills/scalardl-generate-config/e2e/run.sh.",
+  "_comment_2": "Plan reference: docs/plan-009-auto-e2e-test-harness.md (Pre-conditions section).",
+
+  "kubectlContext": "minikube",
+  "scalardlImageTag": "3.13.0",
+  "scalardlSdkVersion": "3.13.0",
+  "_comment_scalardb": "scalardb-schema-loader image is from the ScalarDB project (not ScalarDL). Tag must match the ScalarDB version that ScalarDL depends on internally. For ScalarDL 3.13.0, scalarDbVersion=3.17.2 (see ~/claude/dl/scalardl/build.gradle at tag 3.13.0).",
+  "scalardbSchemaLoaderVersion": "3.17.2",
+  "logDir": "./e2e-runs",
+  "scalardlClientBinPath": "scalardl",
+
+  "sampleContractClassName": "SmokeAsset",
+  "sampleFunctionClassName": "SmokeAssetFunction",
+  "sampleAssetId": "smoke-asset-1",
+  "postgresDockerImage": "postgres:15",
+
+  "_comment_3": "License keys live in environment variables, not this JSON file (see README L3 section). Preferred: E2E_LEDGER_LICENSE_KEY + E2E_AUDITOR_LICENSE_KEY. Legacy fallback: E2E_LICENSE_KEY (single token used for both, Auditor=Yes will likely fail license check).",
+
+  "_comment_4": "Optional: per-pattern timeout overrides (default: postgres 5m / schema-loader 5m / scalardl 10m, per plan-009 OI-4 (a)).",
+  "_timeouts_example": {
+    "postgresReadySeconds": 300,
+    "schemaLoaderCompleteSeconds": 300,
+    "scalardlReadySeconds": 600
+  }
+}

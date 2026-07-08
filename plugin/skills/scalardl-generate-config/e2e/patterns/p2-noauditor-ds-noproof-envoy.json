@@ -1,0 +1,16 @@
+{
+  "patternName": "p2-noauditor-ds-noproof-envoy",
+  "description": "Ledger-only / DS / AssetProof=No / envoy-loadbalancer / TLS=off. Exercises proof.enabled=false path (Phase 7 PKI gen for Ledger key is still generated for register-cert convenience).",
+  "context": {
+    "auditor": false,
+    "dsPattern": true,
+    "hmacPattern": false,
+    "authMethod": "digital-signature",
+    "proofEnabled": false,
+    "envoyLoadBalancer": true,
+    "adminLedgerHost": "<LEDGER_EXTERNAL_IP>",
+    "tlsEnabled": false,
+    "tlsServerServer": false,
+    "licensing": true
+  }
+}
