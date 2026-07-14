@@ -18,7 +18,7 @@ Each skill is launched on its own; they communicate through an on-disk `.scalard
 
 ```bash
 # At the Claude Code prompt
-/plugin marketplace add /path/to/scalardl-starter-skills
+/plugin marketplace add yu2scalar/scalardl-starter-skills
 /plugin install scalardl-starter-skills@scalardl-starter-skills
 /reload-plugins                # or restart the session
 ```
